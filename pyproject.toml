@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "browser-automation"
+version = "0.1.0"
+description = "Clean architecture Python tool for browser automation with Playwright."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "playwright>=1.45.0,<2.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0,<9.0.0",
+]
+
+[project.scripts]
+browser-automation = "browser_automation.interfaces.cli.main:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+

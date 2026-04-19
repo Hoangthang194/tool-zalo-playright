@@ -1,0 +1,44 @@
+{
+  "name": "playwright-docs-demo",
+  "browser": {
+    "engine": "chromium",
+    "channel": "chrome",
+    "headless": false,
+    "slow_mo_ms": 200,
+    "timeout_ms": 15000,
+    "base_url": "https://playwright.dev",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "steps": [
+    {
+      "name": "Open home page",
+      "action": "goto",
+      "url": "/"
+    },
+    {
+      "name": "Wait for hero title",
+      "action": "wait_for_selector",
+      "selector": "text=Playwright enables reliable end-to-end testing"
+    },
+    {
+      "name": "Click get started",
+      "action": "click",
+      "selector": "text=Get started"
+    },
+    {
+      "name": "Wait a bit",
+      "action": "wait_for_timeout",
+      "milliseconds": 1000
+    },
+    {
+      "name": "Take screenshot",
+      "action": "screenshot",
+      "path": "artifacts/playwright-docs.png",
+      "full_page": true
+    }
+  ]
+}
+

@@ -1,0 +1,45 @@
+{
+  "name": "wikipedia-search-demo",
+  "browser": {
+    "engine": "chromium",
+    "channel": "chrome",
+    "headless": false,
+    "slow_mo_ms": 150,
+    "timeout_ms": 15000,
+    "base_url": "https://www.wikipedia.org",
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "steps": [
+    {
+      "name": "Open Wikipedia",
+      "action": "goto",
+      "url": "/"
+    },
+    {
+      "name": "Fill search box",
+      "action": "fill",
+      "selector": "input[name='search']",
+      "text": "Playwright"
+    },
+    {
+      "name": "Press Enter",
+      "action": "press",
+      "selector": "input[name='search']",
+      "key": "Enter"
+    },
+    {
+      "name": "Wait for results heading",
+      "action": "wait_for_selector",
+      "selector": "#firstHeading"
+    },
+    {
+      "name": "Save screenshot",
+      "action": "screenshot",
+      "path": "artifacts/wikipedia-playwright.png",
+      "full_page": true
+    }
+  ]
+}
