@@ -1,8 +1,43 @@
-.venv/
+# Python bytecode and caches
 __pycache__/
-.pytest_cache/
-dist/
-build/
-*.egg-info/
-artifacts/
+*.py[cod]
+*.pyo
+*.pyd
 
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
+.eggs/
+pip-wheel-metadata/
+
+# Test and coverage outputs
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Type-checker / linter caches
+.mypy_cache/
+.ruff_cache/
+.pyre/
+
+# Runtime artifacts
+artifacts/
+*.log
+
+# IDE and editor settings
+.idea/
+.vscode/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+desktop.ini

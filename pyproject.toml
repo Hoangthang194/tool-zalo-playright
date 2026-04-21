@@ -19,6 +19,8 @@ dev = [
 
 [project.scripts]
 browser-automation = "browser_automation.interfaces.cli.main:main"
+browser-automation-gui = "browser_automation.interfaces.gui.app:main"
+browser-automation-zalo-gui = "browser_automation.interfaces.gui.zalo_app:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -29,4 +31,3 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-
