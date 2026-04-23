@@ -538,7 +538,7 @@ class ZaloLauncherGui:
             2,
             "Selector type",
             self.click_target_selector_kind_var,
-            values=("class", "id", "css", "html"),
+            values=("class", "id", "data-id", "anim-data-id", "css", "html"),
             target_name="click_target_selector_kind",
         )
         self._build_entry_row(
@@ -549,7 +549,7 @@ class ZaloLauncherGui:
         )
         self.ui.create_muted_label(
             detail_frame,
-            "Examples: class => menu-item active, id => contact-search-input, css => div.chat-list button.open-chat, html => paste the Zalo element snippet and the app will resolve a clickable selector.",
+            "Examples: class => menu-item active, id => contact-search-input, data-id => div_TabMsg_ThrdChItem, anim-data-id => g1509445607335510374, css => div.chat-list button.open-chat, html => paste the Zalo element snippet and the app will resolve a clickable selector.",
             wraplength=620,
         ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 10))
 

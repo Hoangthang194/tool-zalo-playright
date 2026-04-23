@@ -9,7 +9,7 @@ from browser_automation.domain.exceptions import (
 )
 from browser_automation.domain.zalo_workspace import SavedZaloClickTarget
 
-SUPPORTED_SELECTOR_KINDS = ("class", "id", "css", "html")
+SUPPORTED_SELECTOR_KINDS = ("class", "id", "data-id", "anim-data-id", "css", "html")
 _HTML_TAG_PATTERN = re.compile(r"<[a-zA-Z][^>]*>")
 _INTERACTIVE_TAGS = ("input", "textarea", "select", "button", "a")
 
@@ -25,7 +25,7 @@ def normalize_selector_kind(value: str) -> str:
     normalized = value.strip().casefold()
     if normalized not in SUPPORTED_SELECTOR_KINDS:
         raise ZaloClickTargetConflictError(
-            "Selector type must be one of: class, id, css, html."
+            "Selector type must be one of: class, id, data-id, anim-data-id, css, html."
         )
     return normalized
 
@@ -121,6 +121,12 @@ def build_css_selector(target: SavedZaloClickTarget) -> str:
             raise ZaloClickTargetConflictError("ID selector value is required.")
         return f"#{cleaned}"
 
+    if target.selector_kind == "data-id":
+        return _build_attribute_selector("data-id", selector_value)
+
+    if target.selector_kind == "anim-data-id":
+        return _build_attribute_selector("anim-data-id", selector_value)
+
     return selector_value
 
 
@@ -144,6 +150,10 @@ def _selector_from_element(element: _ParsedHtmlElement) -> str | None:
         cleaned_id = element_id.lstrip("#").strip()
         if cleaned_id:
             return f"#{cleaned_id}"
+
+    anim_data_id = element.attrs.get("anim-data-id")
+    if anim_data_id:
+        return _build_attribute_selector("anim-data-id", anim_data_id)
 
     data_id = element.attrs.get("data-id")
     if data_id:

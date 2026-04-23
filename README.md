@@ -167,5 +167,6 @@ This repository now includes Spec Kit-style artifact sets for the implemented wo
 - Tasks: `specs/005-zalo-tabbed-cookie-account-manager/tasks.md`
 - Feature spec: `specs/006-zalo-zca-session-webhook-bridge/spec.md`
 - Feature spec: `specs/007-zalo-manual-click-target-testing/spec.md`
+- Feature spec: `specs/008-zalo-attribute-selector-targets/spec.md`
 
 These files are intended to be the source of truth for future changes to the workflow-driven browser automation tool.

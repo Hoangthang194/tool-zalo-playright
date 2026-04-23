@@ -1,10 +1,12 @@
 import pytest
 
 from browser_automation.application.use_cases._click_target_support import (
+    build_css_selector,
     extract_css_selector_from_html_snippet,
     looks_like_html_snippet,
 )
 from browser_automation.domain.exceptions import ZaloClickTargetConflictError
+from browser_automation.domain.zalo_workspace import SavedZaloClickTarget
 
 
 def test_extract_css_selector_from_html_snippet_prefers_interactive_input() -> None:
@@ -42,3 +44,41 @@ def test_extract_css_selector_from_html_snippet_rejects_invalid_html() -> None:
         match="HTML selector type requires a valid HTML snippet",
     ):
         extract_css_selector_from_html_snippet("contact-search-input")
+
+
+def test_build_css_selector_supports_anim_data_id() -> None:
+    selector = build_css_selector(
+        SavedZaloClickTarget(
+            id="target-1",
+            name="Open Group",
+            selector_kind="anim-data-id",
+            selector_value="g1509445607335510374",
+        )
+    )
+
+    assert selector == "[anim-data-id='g1509445607335510374']"
+
+
+def test_build_css_selector_supports_data_id() -> None:
+    selector = build_css_selector(
+        SavedZaloClickTarget(
+            id="target-1",
+            name="Open Thread",
+            selector_kind="data-id",
+            selector_value="div_TabMsg_ThrdChItem",
+        )
+    )
+
+    assert selector == "[data-id='div_TabMsg_ThrdChItem']"
+
+
+def test_extract_css_selector_from_html_snippet_can_prefer_anim_data_id() -> None:
+    html = """
+    <div class="msg-item" data-id="div_TabMsg_ThrdChItem" anim-data-id="g1509445607335510374">
+        <div class="truncate">Sale Group</div>
+    </div>
+    """
+
+    selector = extract_css_selector_from_html_snippet(html)
+
+    assert selector == "[anim-data-id='g1509445607335510374']"

@@ -84,3 +84,22 @@ def test_click_zalo_element_resolves_html_snippet_to_clickable_selector() -> Non
     assert result.resolved_selector == "#contact-search-input"
     assert runner.click_targets is not None
     assert runner.click_targets[0].selector_kind == "html"
+
+
+def test_click_zalo_element_uses_anim_data_id_selector() -> None:
+    runner = FakeClickAutomationRunner()
+    use_case = ClickZaloElementUseCase(runner)
+
+    result = use_case.execute(
+        ClickZaloElementRequest(
+            target_name="Open Group",
+            selector_kind="anim-data-id",
+            selector_value="g1509445607335510374",
+            remote_debugging_port=9222,
+        )
+    )
+
+    assert result.clicked_target_name == "Open Group"
+    assert result.resolved_selector == "[anim-data-id='g1509445607335510374']"
+    assert runner.click_targets is not None
+    assert runner.click_targets[0].selector_kind == "anim-data-id"
