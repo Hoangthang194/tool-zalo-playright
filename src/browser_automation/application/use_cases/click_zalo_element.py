@@ -45,12 +45,17 @@ class ClickZaloElementUseCase:
         self._timeout_seconds = timeout_seconds
 
     def execute(self, request: ClickZaloElementRequest) -> ClickZaloElementResult:
+        selector_kind = normalize_selector_kind(request.selector_kind)
+        upload_file_path = ""
+        if selector_kind == "image":
+            upload_file_path = normalize_optional_upload_file_path(request.upload_file_path)
+
         click_target = SavedZaloClickTarget(
             id="adhoc-click-target",
             name=request.target_name.strip() or "Test Element",
-            selector_kind=normalize_selector_kind(request.selector_kind),
+            selector_kind=selector_kind,
             selector_value=normalize_selector_value(request.selector_value),
-            upload_file_path=normalize_optional_upload_file_path(request.upload_file_path),
+            upload_file_path=upload_file_path,
         )
         resolved_selector = build_css_selector(click_target)
 

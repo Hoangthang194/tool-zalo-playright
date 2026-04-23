@@ -105,10 +105,21 @@ class SavedProfileLaunchSupport:
     def looks_like_profile_directory(self, profile_path: Path) -> bool:
         if (profile_path / "Preferences").is_file():
             return True
+        if self.is_empty_directory(profile_path):
+            return True
         profile_name = profile_path.name
         if profile_name == "Default":
             return True
         if profile_name.startswith("Profile "):
             suffix = profile_name.removeprefix("Profile ").strip()
             return suffix.isdigit()
+        return False
+
+    def is_empty_directory(self, profile_path: Path) -> bool:
+        try:
+            next(profile_path.iterdir())
+        except StopIteration:
+            return True
+        except OSError:
+            return False
         return False

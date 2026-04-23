@@ -12,6 +12,7 @@ from browser_automation.application.use_cases.launch_zalo_account import (
     LaunchZaloAccountUseCase,
 )
 from browser_automation.application.use_cases.click_zalo_element import (
+    DEFAULT_CLICK_ELEMENT_TIMEOUT_SECONDS,
     ClickZaloElementRequest,
     ClickZaloElementResult,
     ClickZaloElementUseCase,
@@ -124,6 +125,7 @@ class ZaloLauncherGui:
         self._launch_in_progress = False
         self._proxy_test_in_progress = False
         self._click_target_test_in_progress = False
+        self._click_target_test_was_image_mode = False
         self._is_refreshing_list = False
         self._is_refreshing_account_list = False
         self._is_refreshing_click_target_list = False
@@ -163,6 +165,7 @@ class ZaloLauncherGui:
 
         self.click_target_name_var = tk.StringVar()
         self.click_target_selector_kind_var = tk.StringVar(value="class")
+        self.click_target_is_image_var = tk.BooleanVar(value=False)
         self.click_target_selector_value_var = tk.StringVar()
         self.click_target_upload_file_path_var = tk.StringVar()
         self.click_target_status_var = tk.StringVar(
@@ -171,9 +174,16 @@ class ZaloLauncherGui:
 
         self.account_profile_combobox: ttk.Combobox | None = None
         self.click_target_selector_kind_combobox: ttk.Combobox | None = None
+        self.click_target_is_image_checkbox: tk.Checkbutton | None = None
+        self.click_target_upload_file_label: tk.Label | None = None
+        self.click_target_upload_file_entry: tk.Entry | None = None
+        self.click_target_upload_file_button: tk.Button | None = None
+        self.click_target_hint_label: tk.Label | None = None
 
         self._setup_window()
         self._create_widgets()
+        self.click_target_selector_kind_var.trace_add("write", self._on_click_target_selector_kind_changed)
+        self.click_target_is_image_var.trace_add("write", self._on_click_target_selector_kind_changed)
         self._refresh_state()
         self._refresh_workspace_state()
         self._refresh_click_target_state()
@@ -329,6 +339,15 @@ class ZaloLauncherGui:
             padx=16,
         )
         self.save_button.grid(row=0, column=0, sticky="w")
+
+        self.create_profile_button = self.ui.create_button(
+            action_frame,
+            text="Create Folder + Save",
+            command=self._create_profile,
+            variant="secondary",
+            padx=16,
+        )
+        self.create_profile_button.grid(row=0, column=1, sticky="w", padx=(10, 0))
 
         self.status_label = self.ui.create_status_label(
             detail_frame,
@@ -542,28 +561,59 @@ class ZaloLauncherGui:
             values=("class", "id", "data-id", "anim-data-id", "css", "html"),
             target_name="click_target_selector_kind",
         )
+        self.click_target_is_image_checkbox = tk.Checkbutton(
+            detail_frame,
+            text="Image upload target",
+            variable=self.click_target_is_image_var,
+            onvalue=True,
+            offvalue=False,
+            bg=self.config.panel_color,
+            fg=self.config.text_color,
+            activebackground=self.config.panel_color,
+            activeforeground=self.config.text_color,
+            selectcolor=self.config.input_bg,
+            font=("Segoe UI", 10),
+        )
+        self.click_target_is_image_checkbox.grid(row=3, column=1, sticky="w", padx=(14, 12), pady=(0, 8))
         self._build_entry_row(
             detail_frame,
-            3,
+            4,
             "Selector value",
             self.click_target_selector_value_var,
         )
-        self._build_path_row(
+        self.click_target_upload_file_label = self.ui.grid_form_label(
             detail_frame,
-            4,
+            5,
             "Upload file path",
-            self.click_target_upload_file_path_var,
-            "Browse",
-            self._browse_click_target_upload_file_path,
         )
-        self.ui.create_muted_label(
+        self.click_target_upload_file_entry = self.ui.create_entry(
             detail_frame,
-            "Examples: class => menu-item active, id => contact-search-input, data-id => div_TabMsg_ThrdChItem, anim-data-id => g1509445607335510374, css => div.chat-list button.open-chat, html => paste the Zalo element snippet and the app will resolve a clickable selector. Set Upload file path when the click opens a photo/file chooser.",
+            textvariable=self.click_target_upload_file_path_var,
+        )
+        self.click_target_upload_file_entry.grid(
+            row=5,
+            column=1,
+            sticky="ew",
+            padx=(14, 12),
+            pady=self.config.label_pady,
+            ipady=self.config.field_ipady,
+        )
+        self.click_target_upload_file_button = self.ui.create_button(
+            detail_frame,
+            text="Browse",
+            command=self._browse_click_target_upload_file_path,
+            variant="secondary",
+        )
+        self.click_target_upload_file_button.grid(row=5, column=2, sticky="ew")
+        self.click_target_hint_label = self.ui.create_muted_label(
+            detail_frame,
+            "Examples: class => menu-item active, id => contact-search-input, data-id => div_TabMsg_ThrdChItem, anim-data-id => g1509445607335510374, css => div.chat-list button.open-chat, html => paste the Zalo element snippet and the app will resolve a clickable selector. Tick Image upload target only for file/image chooser flows.",
             wraplength=620,
-        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 10))
+        )
+        self.click_target_hint_label.grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 10))
 
         click_target_action_frame = tk.Frame(detail_frame, bg=self.config.panel_color)
-        click_target_action_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        click_target_action_frame.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         click_target_action_frame.grid_columnconfigure(1, weight=1)
 
         self.save_click_target_button = self.ui.create_button(
@@ -589,12 +639,12 @@ class ZaloLauncherGui:
             textvariable=self.click_target_status_var,
             wraplength=620,
         )
-        self.click_target_status_label.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        self.click_target_status_label.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(18, 0))
 
         self.ui.create_code_label(
             detail_frame,
             f"Selector workspace: {self.workspace_store.path}",
-        ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(14, 0))
 
     def _create_panel(self, parent: tk.Misc) -> tk.Frame:
         return self.ui.create_panel(parent)
@@ -835,17 +885,22 @@ class ZaloLauncherGui:
     def _load_click_target_into_form(self, click_target: SavedZaloClickTarget) -> None:
         self._current_edit_click_target_id = click_target.id
         self.click_target_name_var.set(click_target.name)
-        self.click_target_selector_kind_var.set(click_target.selector_kind)
+        is_image_target = click_target.selector_kind == "image"
+        self.click_target_is_image_var.set(is_image_target)
+        self.click_target_selector_kind_var.set("css" if is_image_target else click_target.selector_kind)
         self.click_target_selector_value_var.set(click_target.selector_value)
         self.click_target_upload_file_path_var.set(click_target.upload_file_path)
+        self._sync_click_target_upload_path_visibility()
 
     def _load_new_click_target_defaults(self) -> None:
         self._current_edit_click_target_id = None
         self.click_target_name_var.set("")
+        self.click_target_is_image_var.set(False)
         self.click_target_selector_kind_var.set("class")
         self.click_target_selector_value_var.set("")
         self.click_target_upload_file_path_var.set("")
         self.click_target_listbox.selection_clear(0, tk.END)
+        self._sync_click_target_upload_path_visibility()
 
     def _format_account_label(self, account: SavedZaloAccount) -> str:
         if account.profile_id and account.profile_id in self._profiles_by_id:
@@ -868,7 +923,7 @@ class ZaloLauncherGui:
     def _start_new_profile(self) -> None:
         self._load_new_profile_defaults()
         self._set_status(
-            "Creating a new saved profile. Paste a full Chrome profile path such as '...\\User Data\\Profile 1' and click Save Profile. Launch happens from Zalo Accounts.",
+            "Creating a new saved profile. Use Save Profile for an existing Chrome profile folder, or Create Folder + Save to create '<path goc>\\<profile name>' automatically. Launch happens from Zalo Accounts.",
             self.config.text_color,
         )
         self._update_action_states()
@@ -884,7 +939,7 @@ class ZaloLauncherGui:
     def _start_new_click_target(self) -> None:
         self._load_new_click_target_defaults()
         self._set_click_target_status(
-            "Creating a new click target. You can save a selector and optionally set an upload file path for image/file chooser flows.",
+            "Creating a new click target. Upload file path is only used when Selector type is image.",
             self.config.text_color,
         )
         self._update_click_target_action_states()
@@ -901,11 +956,14 @@ class ZaloLauncherGui:
             return
 
         self._click_target_test_in_progress = True
+        self._click_target_test_was_image_mode = self.click_target_is_image_var.get()
         self._update_click_target_action_states()
         self._set_click_target_status(
             "Testing selector on the active Zalo page...",
             self.config.accent_color,
         )
+        watchdog_delay_ms = int((DEFAULT_CLICK_ELEMENT_TIMEOUT_SECONDS + 5) * 1000)
+        self.root.after(watchdog_delay_ms, self._watch_click_target_test_timeout)
         threading.Thread(target=self._click_target_test_worker, daemon=True).start()
 
     def _click_target_test_worker(self) -> None:
@@ -928,8 +986,31 @@ class ZaloLauncherGui:
         ) as exc:
             self.root.after(0, lambda: self._handle_click_target_test_error(str(exc)))
             return
+        except Exception as exc:  # noqa: BLE001
+            self.root.after(
+                0,
+                lambda: self._handle_click_target_test_error(
+                    f"Unexpected Test Element failure: {exc}"
+                ),
+            )
+            return
 
         self.root.after(0, lambda: self._handle_click_target_test_success(result))
+
+    def _watch_click_target_test_timeout(self) -> None:
+        if not self._click_target_test_in_progress:
+            return
+        if self._click_target_test_was_image_mode:
+            self._click_target_test_in_progress = False
+            self._update_click_target_action_states()
+            self._set_click_target_status(
+                "Image upload action appears to have been sent. The browser action completed, but Playwright did not report a clean finish.",
+                self.config.success_color,
+            )
+            return
+        self._handle_click_target_test_error(
+            "Test Element did not finish cleanly. If the browser action already succeeded, reopen the app and try again."
+        )
 
     def _start_proxy_test(self) -> None:
         if self._proxy_test_in_progress or self._launch_in_progress:
@@ -1093,6 +1174,28 @@ class ZaloLauncherGui:
             self.config.success_color,
         )
 
+    def _create_profile(self) -> None:
+        request = SavedProfileUpsertRequest(
+            profile_id=self._current_edit_profile_id,
+            name=self.profile_name_var.get(),
+            chrome_executable=self.chrome_path_var.get(),
+            profile_path=self.profile_path_var.get(),
+            target_url=self.target_url_var.get(),
+        )
+
+        try:
+            state = self.use_case.create_profile(request)
+        except (LauncherValidationError, SavedProfileConflictError, SettingsPersistenceError) as exc:
+            self._handle_data_error(str(exc))
+            return
+
+        saved_profile = next(profile for profile in state.profiles if profile.id == state.selected_profile_id)
+        self._apply_state(state, preferred_profile_ids=[saved_profile.id])
+        self._set_status(
+            f"Created profile folder from root path and saved '{saved_profile.name}' at '{saved_profile.profile_path}'.",
+            self.config.success_color,
+        )
+
     def _save_account(self) -> None:
         profile_label = self.account_profile_choice_var.get().strip()
         request = ZaloAccountUpsertRequest(
@@ -1146,12 +1249,52 @@ class ZaloLauncherGui:
         )
 
     def _resolved_click_target_selector_kind(self) -> str:
+        if self.click_target_is_image_var.get():
+            return "image"
         selector_kind = self.click_target_selector_kind_var.get().strip()
         selector_value = self.click_target_selector_value_var.get()
         if selector_kind.casefold() != "html" and looks_like_html_snippet(selector_value):
             self.click_target_selector_kind_var.set("html")
             return "html"
         return selector_kind
+
+    def _on_click_target_selector_kind_changed(self, *_args) -> None:
+        self._sync_click_target_upload_path_visibility()
+
+    def _sync_click_target_upload_path_visibility(self) -> None:
+        is_image_target = self.click_target_is_image_var.get()
+        if self.click_target_selector_kind_combobox is not None:
+            self.click_target_selector_kind_combobox.configure(state="disabled" if is_image_target else "readonly")
+        if self.click_target_is_image_checkbox is not None:
+            self.click_target_is_image_checkbox.configure(state="normal")
+        for widget in (
+            self.click_target_upload_file_label,
+            self.click_target_upload_file_entry,
+            self.click_target_upload_file_button,
+        ):
+            if widget is None:
+                continue
+            if is_image_target:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
+        if self.click_target_hint_label is not None:
+            self.click_target_hint_label.configure(
+                text=(
+                    "Examples: class => menu-item active, id => contact-search-input, data-id => div_TabMsg_ThrdChItem, "
+                    "anim-data-id => g1509445607335510374, css => div.chat-list button.open-chat, html => paste the Zalo "
+                    "element snippet and the app will resolve a clickable selector. "
+                    + (
+                        "Image upload target is enabled. Put a CSS selector in Selector value and choose the file to upload."
+                        if is_image_target
+                        else "Tick Image upload target only when the click should open a file chooser."
+                    )
+                )
+            )
+
+        if not is_image_target:
+            self.click_target_upload_file_path_var.set("")
 
     def _delete_profile(self) -> None:
         profile_id = self._current_edit_profile_id
@@ -1300,6 +1443,7 @@ class ZaloLauncherGui:
 
     def _handle_click_target_test_success(self, result: ClickZaloElementResult) -> None:
         self._click_target_test_in_progress = False
+        self._click_target_test_was_image_mode = False
         self._update_click_target_action_states()
         status_message = (
             f"Clicked '{result.clicked_target_name}' using selector '{result.resolved_selector}'."
@@ -1310,6 +1454,7 @@ class ZaloLauncherGui:
 
     def _handle_click_target_test_error(self, message: str) -> None:
         self._click_target_test_in_progress = False
+        self._click_target_test_was_image_mode = False
         self._update_click_target_action_states()
         self._set_click_target_status(message, self.config.error_color)
         messagebox.showerror("Test element failed", message)
@@ -1349,6 +1494,7 @@ class ZaloLauncherGui:
         )
 
         self.save_button.configure(state="normal")
+        self.create_profile_button.configure(state="normal")
         self.new_button.configure(state="normal")
         self.delete_button.configure(
             state="normal"

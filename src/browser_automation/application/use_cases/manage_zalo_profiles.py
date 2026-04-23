@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -106,6 +107,42 @@ class ZaloProfileManagerUseCase:
         profile_name = self._normalize_name(request.name)
         chrome_executable = self._launch_support.resolve_chrome_executable(request.chrome_executable)
         profile_path = self._launch_support.resolve_profile_path(request.profile_path)
+        self._launch_support.validate_target_url(request.target_url)
+
+        self._ensure_unique_name(profile_name, request.profile_id, library)
+        self._ensure_unique_profile_path(profile_path, request.profile_id, library)
+
+        profile = SavedChromeProfile(
+            id=request.profile_id or uuid4().hex,
+            name=profile_name,
+            chrome_executable=str(chrome_executable),
+            profile_path=str(profile_path),
+            target_url=request.target_url,
+        )
+
+        next_profiles: list[SavedChromeProfile] = []
+        replaced = False
+        for current_profile in library.profiles:
+            if current_profile.id == profile.id:
+                next_profiles.append(profile)
+                replaced = True
+            else:
+                next_profiles.append(current_profile)
+        if not replaced:
+            next_profiles.append(profile)
+
+        updated_library = SavedProfileLibrary(
+            profiles=tuple(next_profiles),
+            selected_profile_id=profile.id,
+        )
+        self._library_store.save(updated_library)
+        return self._build_state(updated_library)
+
+    def create_profile(self, request: SavedProfileUpsertRequest) -> ZaloProfileManagerState:
+        library = self._normalized_library(self._library_store.load())
+        profile_name = self._normalize_name(request.name)
+        chrome_executable = self._launch_support.resolve_chrome_executable(request.chrome_executable)
+        profile_path = self._create_profile_directory(request.profile_path, profile_name)
         self._launch_support.validate_target_url(request.target_url)
 
         self._ensure_unique_name(profile_name, request.profile_id, library)
@@ -425,3 +462,49 @@ class ZaloProfileManagerUseCase:
         except SettingsPersistenceError:
             return False
         return True
+
+    def _create_profile_directory(self, value: str, profile_name: str) -> Path:
+        raw_value = value.strip()
+        if not raw_value:
+            raise SavedProfileConflictError("Chrome profile path is required.")
+
+        root_path = Path(raw_value).expanduser()
+        if not root_path.is_absolute():
+            raise SavedProfileConflictError("Chrome profile path must be an absolute path.")
+        root_path = root_path.resolve(strict=False)
+
+        folder_name = self._normalize_profile_folder_name(profile_name)
+        profile_path = root_path
+        if root_path.name.casefold() != folder_name.casefold():
+            profile_path = root_path / folder_name
+
+        if profile_path.name.casefold() == "user data":
+            raise SavedProfileConflictError(
+                "Select a profile folder under the root User Data directory, not the root 'User Data' folder itself."
+            )
+        if profile_path.exists() and not profile_path.is_dir():
+            raise SavedProfileConflictError(
+                f"Chrome profile path already exists and is not a directory: {profile_path}"
+            )
+
+        try:
+            profile_path.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise SettingsPersistenceError(
+                f"Could not create Chrome profile folder: {profile_path}"
+            ) from exc
+
+        if not self._launch_support.looks_like_profile_directory(profile_path):
+            raise SavedProfileConflictError(
+                "Selected path is not an empty folder or a recognizable Chrome profile folder."
+            )
+
+        return profile_path
+
+    def _normalize_profile_folder_name(self, profile_name: str) -> str:
+        normalized = re.sub(r'[<>:"/\\\\|?*]+', "-", profile_name).strip().rstrip(". ")
+        if not normalized:
+            raise SavedProfileConflictError(
+                "Profile name contains only characters that cannot be used in a folder name."
+            )
+        return normalized

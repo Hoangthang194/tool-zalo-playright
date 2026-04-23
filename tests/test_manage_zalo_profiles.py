@@ -210,6 +210,84 @@ def test_manager_use_case_rejects_duplicate_profile_paths(tmp_path) -> None:
     )
 
 
+def test_manager_use_case_creates_new_profile_directory_and_saves_profile(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+    profile_root = tmp_path / "Custom Root"
+
+    store = InMemorySavedProfileLibraryStore()
+    use_case = ZaloProfileManagerUseCase(
+        library_store=store,
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=FakeChromeLauncher(),
+    )
+
+    state = use_case.create_profile(
+        SavedProfileUpsertRequest(
+            name="Account A",
+            chrome_executable=str(chrome_executable),
+            profile_path=str(profile_root),
+        )
+    )
+
+    new_profile_path = profile_root / "Account A"
+    assert new_profile_path.is_dir()
+    assert len(state.profiles) == 1
+    assert state.profiles[0].profile_path == str(new_profile_path.resolve(strict=False))
+
+
+def test_manager_use_case_create_profile_keeps_explicit_final_folder_when_it_matches_name(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+    explicit_profile_path = tmp_path / "Custom Root" / "Account C"
+
+    store = InMemorySavedProfileLibraryStore()
+    use_case = ZaloProfileManagerUseCase(
+        library_store=store,
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=FakeChromeLauncher(),
+    )
+
+    state = use_case.create_profile(
+        SavedProfileUpsertRequest(
+            name="Account C",
+            chrome_executable=str(chrome_executable),
+            profile_path=str(explicit_profile_path),
+        )
+    )
+
+    assert explicit_profile_path.is_dir()
+    assert state.profiles[0].profile_path == str(explicit_profile_path.resolve(strict=False))
+
+
+def test_manager_use_case_launches_empty_custom_profile_directory(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+    profile_path = tmp_path / "Custom Root" / "Account B"
+    profile_path.mkdir(parents=True)
+
+    store = InMemorySavedProfileLibraryStore()
+    launcher = FakeChromeLauncher()
+    use_case = ZaloProfileManagerUseCase(
+        library_store=store,
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=launcher,
+    )
+
+    state = use_case.save_profile(
+        SavedProfileUpsertRequest(
+            name="Account B",
+            chrome_executable=str(chrome_executable),
+            profile_path=str(profile_path),
+        )
+    )
+    result = use_case.launch_profile(state.selected_profile_id)
+
+    assert result.profile_name == "Account B"
+    assert launcher.launched_config.user_data_dir == profile_path.parent
+    assert launcher.launched_config.profile_directory == "Account B"
+
+
 def test_manager_use_case_launches_selected_profile_and_builds_launch_config(tmp_path) -> None:
     chrome_executable = tmp_path / "chrome.exe"
     chrome_executable.write_text("", encoding="utf-8")

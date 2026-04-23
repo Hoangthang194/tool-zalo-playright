@@ -89,6 +89,19 @@ def test_build_css_selector_supports_data_id() -> None:
     assert selector == "[data-id='div_TabMsg_ThrdChItem']"
 
 
+def test_build_css_selector_supports_image_targets_as_css() -> None:
+    selector = build_css_selector(
+        SavedZaloClickTarget(
+            id="target-1",
+            name="Upload Image",
+            selector_kind="image",
+            selector_value="input[type='file']",
+        )
+    )
+
+    assert selector == "input[type='file']"
+
+
 def test_extract_css_selector_from_html_snippet_can_prefer_anim_data_id() -> None:
     html = """
     <div class="msg-item" data-id="div_TabMsg_ThrdChItem" anim-data-id="g1509445607335510374">

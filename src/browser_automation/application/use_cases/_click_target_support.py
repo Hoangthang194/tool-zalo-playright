@@ -10,7 +10,7 @@ from browser_automation.domain.exceptions import (
 )
 from browser_automation.domain.zalo_workspace import SavedZaloClickTarget
 
-SUPPORTED_SELECTOR_KINDS = ("class", "id", "data-id", "anim-data-id", "css", "html")
+SUPPORTED_SELECTOR_KINDS = ("class", "id", "data-id", "anim-data-id", "css", "html", "image")
 _HTML_TAG_PATTERN = re.compile(r"<[a-zA-Z][^>]*>")
 _INTERACTIVE_TAGS = ("input", "textarea", "select", "button", "a")
 
@@ -26,7 +26,7 @@ def normalize_selector_kind(value: str) -> str:
     normalized = value.strip().casefold()
     if normalized not in SUPPORTED_SELECTOR_KINDS:
         raise ZaloClickTargetConflictError(
-            "Selector type must be one of: class, id, data-id, anim-data-id, css, html."
+            "Selector type must be one of: class, id, data-id, anim-data-id, css, html, image."
         )
     return normalized
 
@@ -123,6 +123,9 @@ def build_css_selector(target: SavedZaloClickTarget) -> str:
     selector_value = target.selector_value.strip()
     if target.selector_kind == "html":
         return extract_css_selector_from_html_snippet(selector_value)
+
+    if target.selector_kind == "image":
+        return selector_value
 
     if target.selector_kind == "class":
         cleaned = selector_value.lstrip(".").strip()

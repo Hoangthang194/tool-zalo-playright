@@ -54,15 +54,25 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
                 for click_target in click_targets:
                     css_selector = build_css_selector(click_target)
                     locator = page.locator(css_selector).first
+                    self._ensure_locator_exists(locator, css_selector=css_selector)
                     if click_target.upload_file_path:
                         self._handle_file_target(
                             page,
                             locator,
+                            css_selector=css_selector,
                             upload_file_path=click_target.upload_file_path,
                             timeout_seconds=timeout_seconds,
                         )
-                    else:
-                        self._click_locator(locator, timeout_seconds=timeout_seconds)
+                        clicked_target_names.append(click_target.name)
+                        return ClickAutomationResult(
+                            clicked_target_names=tuple(clicked_target_names)
+                        )
+
+                    self._click_locator(
+                        locator,
+                        css_selector=css_selector,
+                        timeout_seconds=timeout_seconds,
+                    )
                     clicked_target_names.append(click_target.name)
 
                 return ClickAutomationResult(
@@ -76,8 +86,12 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
         last_error = None
 
         while time.monotonic() < deadline:
+            remaining_ms = max(250, int((deadline - time.monotonic()) * 1000))
             try:
-                return playwright.chromium.connect_over_cdp(endpoint)
+                return playwright.chromium.connect_over_cdp(
+                    endpoint,
+                    timeout=min(1500, remaining_ms),
+                )
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 time.sleep(0.5)
@@ -109,9 +123,21 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
             return fallback_page
         raise ZaloClickAutomationError("No Chrome page was available for selector automation.")
 
-    def _click_locator(self, locator, *, timeout_seconds: float) -> None:
+    def _ensure_locator_exists(self, locator, *, css_selector: str) -> None:
+        try:
+            if locator.count() > 0:
+                return
+        except Exception as exc:  # noqa: BLE001
+            raise ZaloClickAutomationError(
+                f"Could not inspect selector '{css_selector}' on the active page."
+            ) from exc
+
+        raise ZaloClickAutomationError(
+            f"Selector not found on the active page: '{css_selector}'."
+        )
+
+    def _click_locator(self, locator, *, css_selector: str, timeout_seconds: float) -> None:
         timeout_ms = int(timeout_seconds * 1000)
-        locator.wait_for(state="attached", timeout=timeout_ms)
         locator.scroll_into_view_if_needed(timeout=timeout_ms)
 
         try:
@@ -120,29 +146,34 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
         except Exception:  # noqa: BLE001
             # Zalo sometimes wraps real inputs with placeholder overlays.
             # Fallback to direct DOM focus/click for controls such as the search box.
-            locator.evaluate(
-                """
-                (element) => {
-                    if (typeof element.focus === "function") {
-                        element.focus();
+            try:
+                locator.evaluate(
+                    """
+                    (element) => {
+                        if (typeof element.focus === "function") {
+                            element.focus();
+                        }
+                        if (typeof element.click === "function") {
+                            element.click();
+                        }
                     }
-                    if (typeof element.click === "function") {
-                        element.click();
-                    }
-                }
-                """
-            )
+                    """
+                )
+            except Exception as fallback_exc:  # noqa: BLE001
+                raise ZaloClickAutomationError(
+                    f"Selector was found but could not be clicked: '{css_selector}'."
+                ) from fallback_exc
 
     def _handle_file_target(
         self,
         page,
         locator,
         *,
+        css_selector: str,
         upload_file_path: str,
         timeout_seconds: float,
     ) -> None:
         timeout_ms = int(timeout_seconds * 1000)
-        locator.wait_for(state="attached", timeout=timeout_ms)
 
         try:
             element_info = locator.evaluate(
@@ -158,14 +189,49 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
 
         if element_info.get("tag") == "input" and element_info.get("type") == "file":
             locator.set_input_files(upload_file_path, timeout=timeout_ms)
+            self._submit_uploaded_file(page, timeout_seconds=timeout_seconds)
             return
 
         try:
             with page.expect_file_chooser(timeout=timeout_ms) as file_chooser_info:
-                self._click_locator(locator, timeout_seconds=timeout_seconds)
+                self._click_locator(
+                    locator,
+                    css_selector=css_selector,
+                    timeout_seconds=timeout_seconds,
+                )
             file_chooser_info.value.set_files(upload_file_path, timeout=timeout_ms)
+            self._submit_uploaded_file(page, timeout_seconds=timeout_seconds)
             return
         except Exception as exc:  # noqa: BLE001
             raise ZaloClickAutomationError(
-                "The selected element did not expose a file chooser for upload automation."
+                f"The selected element did not expose a file chooser for upload automation: '{css_selector}'."
+            ) from exc
+
+    def _submit_uploaded_file(self, page, *, timeout_seconds: float) -> None:
+        timeout_ms = int(timeout_seconds * 1000)
+        time.sleep(0.5)
+
+        send_selectors = (
+            "[data-id='btn_Send_Text']",
+            "[data-id='btn_send']",
+            "[aria-label='Send']",
+            "button[type='submit']",
+        )
+
+        for selector in send_selectors:
+            locator = page.locator(selector).first
+            try:
+                if locator.count() == 0:
+                    continue
+                locator.click(timeout=1000)
+                return
+            except Exception:
+                continue
+
+        try:
+            page.keyboard.press("Enter", timeout=timeout_ms)
+            return
+        except Exception as exc:
+            raise ZaloClickAutomationError(
+                "The file was selected but the app could not send it automatically."
             ) from exc

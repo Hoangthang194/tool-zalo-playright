@@ -59,7 +59,9 @@ class ZaloClickTargetManagerUseCase:
         target_name = normalize_click_target_name(request.name)
         selector_kind = normalize_selector_kind(request.selector_kind)
         selector_value = normalize_selector_value(request.selector_value)
-        upload_file_path = normalize_optional_upload_file_path(request.upload_file_path)
+        upload_file_path = ""
+        if selector_kind == "image":
+            upload_file_path = normalize_optional_upload_file_path(request.upload_file_path)
 
         self._ensure_unique_name(target_name, request.click_target_id, library)
 
