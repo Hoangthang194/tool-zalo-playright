@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
+from pathlib import Path
 
 from browser_automation.domain.exceptions import (
     ZaloClickTargetConflictError,
@@ -35,6 +36,21 @@ def normalize_selector_value(value: str) -> str:
     if not normalized:
         raise ZaloClickTargetConflictError("Selector value is required.")
     return normalized
+
+
+def normalize_optional_upload_file_path(value: str) -> str:
+    normalized = value.strip()
+    if not normalized:
+        return ""
+
+    file_path = Path(normalized).expanduser()
+    if not file_path.is_absolute():
+        raise ZaloClickTargetConflictError("Upload file path must be an absolute path.")
+    if not file_path.is_file():
+        raise ZaloClickTargetConflictError(
+            f"Upload file path not found: {file_path}"
+        )
+    return str(file_path)
 
 
 def looks_like_html_snippet(value: str) -> bool:

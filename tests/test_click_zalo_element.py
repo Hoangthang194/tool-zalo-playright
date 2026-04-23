@@ -103,3 +103,25 @@ def test_click_zalo_element_uses_anim_data_id_selector() -> None:
     assert result.resolved_selector == "[anim-data-id='g1509445607335510374']"
     assert runner.click_targets is not None
     assert runner.click_targets[0].selector_kind == "anim-data-id"
+
+
+def test_click_zalo_element_passes_upload_file_path_to_runner(tmp_path) -> None:
+    upload_file = tmp_path / "photo.png"
+    upload_file.write_text("data", encoding="utf-8")
+
+    runner = FakeClickAutomationRunner()
+    use_case = ClickZaloElementUseCase(runner)
+
+    result = use_case.execute(
+        ClickZaloElementRequest(
+            target_name="Upload Image",
+            selector_kind="id",
+            selector_value="btnUpload",
+            upload_file_path=str(upload_file),
+            remote_debugging_port=9222,
+        )
+    )
+
+    assert result.uploaded_file_path == str(upload_file)
+    assert runner.click_targets is not None
+    assert runner.click_targets[0].upload_file_path == str(upload_file)

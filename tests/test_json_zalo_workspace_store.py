@@ -10,6 +10,8 @@ from browser_automation.infrastructure.chrome_launcher.json_zalo_workspace_store
 
 def test_json_zalo_workspace_store_round_trips_account_proxy_data(tmp_path) -> None:
     store = JsonZaloWorkspaceStore(path=tmp_path / "zalo-workspace.json")
+    upload_file = tmp_path / "image.png"
+    upload_file.write_text("data", encoding="utf-8")
     library = ZaloWorkspaceLibrary(
         accounts=(
             SavedZaloAccount(
@@ -25,6 +27,7 @@ def test_json_zalo_workspace_store_round_trips_account_proxy_data(tmp_path) -> N
                 name="Open Menu",
                 selector_kind="class",
                 selector_value="menu-item active",
+                upload_file_path=str(upload_file),
             ),
         ),
         selected_account_id="account-1",
@@ -85,20 +88,23 @@ def test_json_zalo_workspace_store_loads_accounts_from_legacy_payload_shape(tmp_
 
 
 def test_json_zalo_workspace_store_loads_click_targets_when_present(tmp_path) -> None:
+    upload_file = tmp_path / "image.png"
+    upload_file.write_text("data", encoding="utf-8")
+    escaped_upload_file = str(upload_file).replace("\\", "\\\\")
     workspace_path = tmp_path / "zalo-workspace.json"
     workspace_path.write_text(
-        """
-        {
+        f"""
+        {{
           "selected_account_id": "account-1",
           "selected_click_target_id": "target-1",
           "accounts": [
-            {"id": "account-1", "name": "Profile One", "profile_id": "profile-1", "proxy": ""}
+            {{"id": "account-1", "name": "Profile One", "profile_id": "profile-1", "proxy": ""}}
           ],
           "click_targets": [
-            {"id": "target-1", "name": "Open Menu", "selector_kind": "class", "selector_value": "menu-item"},
-            {"id": "", "name": "Broken", "selector_kind": "id", "selector_value": "submit"}
+            {{"id": "target-1", "name": "Open Menu", "selector_kind": "class", "selector_value": "menu-item", "upload_file_path": "{escaped_upload_file}"}},
+            {{"id": "", "name": "Broken", "selector_kind": "id", "selector_value": "submit"}}
           ]
-        }
+        }}
         """,
         encoding="utf-8",
     )
@@ -108,4 +114,5 @@ def test_json_zalo_workspace_store_loads_click_targets_when_present(tmp_path) ->
     assert len(loaded.click_targets) == 1
     assert loaded.click_targets[0].id == "target-1"
     assert loaded.click_targets[0].selector_kind == "class"
+    assert loaded.click_targets[0].upload_file_path == str(upload_file)
     assert loaded.selected_click_target_id == "target-1"

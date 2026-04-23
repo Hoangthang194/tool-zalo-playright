@@ -164,8 +164,9 @@ class ZaloLauncherGui:
         self.click_target_name_var = tk.StringVar()
         self.click_target_selector_kind_var = tk.StringVar(value="class")
         self.click_target_selector_value_var = tk.StringVar()
+        self.click_target_upload_file_path_var = tk.StringVar()
         self.click_target_status_var = tk.StringVar(
-            value="Manage saved class, id, CSS, or HTML-snippet selectors and test them manually against a launched Zalo account."
+            value="Manage saved selectors and optionally attach an upload file path for manual Test Element actions."
         )
 
         self.account_profile_combobox: ttk.Combobox | None = None
@@ -547,14 +548,22 @@ class ZaloLauncherGui:
             "Selector value",
             self.click_target_selector_value_var,
         )
+        self._build_path_row(
+            detail_frame,
+            4,
+            "Upload file path",
+            self.click_target_upload_file_path_var,
+            "Browse",
+            self._browse_click_target_upload_file_path,
+        )
         self.ui.create_muted_label(
             detail_frame,
-            "Examples: class => menu-item active, id => contact-search-input, data-id => div_TabMsg_ThrdChItem, anim-data-id => g1509445607335510374, css => div.chat-list button.open-chat, html => paste the Zalo element snippet and the app will resolve a clickable selector.",
+            "Examples: class => menu-item active, id => contact-search-input, data-id => div_TabMsg_ThrdChItem, anim-data-id => g1509445607335510374, css => div.chat-list button.open-chat, html => paste the Zalo element snippet and the app will resolve a clickable selector. Set Upload file path when the click opens a photo/file chooser.",
             wraplength=620,
-        ).grid(row=4, column=0, columnspan=3, sticky="w", pady=(4, 10))
+        ).grid(row=5, column=0, columnspan=3, sticky="w", pady=(4, 10))
 
         click_target_action_frame = tk.Frame(detail_frame, bg=self.config.panel_color)
-        click_target_action_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        click_target_action_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         click_target_action_frame.grid_columnconfigure(1, weight=1)
 
         self.save_click_target_button = self.ui.create_button(
@@ -580,12 +589,12 @@ class ZaloLauncherGui:
             textvariable=self.click_target_status_var,
             wraplength=620,
         )
-        self.click_target_status_label.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        self.click_target_status_label.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(18, 0))
 
         self.ui.create_code_label(
             detail_frame,
             f"Selector workspace: {self.workspace_store.path}",
-        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        ).grid(row=8, column=0, columnspan=3, sticky="w", pady=(14, 0))
 
     def _create_panel(self, parent: tk.Misc) -> tk.Frame:
         return self.ui.create_panel(parent)
@@ -828,12 +837,14 @@ class ZaloLauncherGui:
         self.click_target_name_var.set(click_target.name)
         self.click_target_selector_kind_var.set(click_target.selector_kind)
         self.click_target_selector_value_var.set(click_target.selector_value)
+        self.click_target_upload_file_path_var.set(click_target.upload_file_path)
 
     def _load_new_click_target_defaults(self) -> None:
         self._current_edit_click_target_id = None
         self.click_target_name_var.set("")
         self.click_target_selector_kind_var.set("class")
         self.click_target_selector_value_var.set("")
+        self.click_target_upload_file_path_var.set("")
         self.click_target_listbox.selection_clear(0, tk.END)
 
     def _format_account_label(self, account: SavedZaloAccount) -> str:
@@ -849,7 +860,10 @@ class ZaloLauncherGui:
         return base_label
 
     def _format_click_target_label(self, click_target: SavedZaloClickTarget) -> str:
-        return f"{click_target.name} | {click_target.selector_kind}: {click_target.selector_value}"
+        label = f"{click_target.name} | {click_target.selector_kind}: {click_target.selector_value}"
+        if click_target.upload_file_path:
+            label += " | upload"
+        return label
 
     def _start_new_profile(self) -> None:
         self._load_new_profile_defaults()
@@ -870,7 +884,7 @@ class ZaloLauncherGui:
     def _start_new_click_target(self) -> None:
         self._load_new_click_target_defaults()
         self._set_click_target_status(
-            "Creating a new click target. You can save a class, id, css selector, or paste an HTML snippet from Zalo and test it manually after launch.",
+            "Creating a new click target. You can save a selector and optionally set an upload file path for image/file chooser flows.",
             self.config.text_color,
         )
         self._update_click_target_action_states()
@@ -901,6 +915,7 @@ class ZaloLauncherGui:
                     target_name=self.click_target_name_var.get(),
                     selector_kind=self._resolved_click_target_selector_kind(),
                     selector_value=self.click_target_selector_value_var.get(),
+                    upload_file_path=self.click_target_upload_file_path_var.get(),
                     remote_debugging_port=self._last_account_remote_debugging_port or 0,
                     target_url=self._last_account_target_url,
                 )
@@ -1045,6 +1060,17 @@ class ZaloLauncherGui:
         if directory:
             self.profile_path_var.set(directory)
 
+    def _browse_click_target_upload_file_path(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="Select upload file",
+            filetypes=[
+                ("Images", "*.png;*.jpg;*.jpeg;*.webp;*.gif;*.bmp"),
+                ("All files", "*.*"),
+            ],
+        )
+        if filename:
+            self.click_target_upload_file_path_var.set(filename)
+
     def _save_profile(self) -> None:
         request = SavedProfileUpsertRequest(
             profile_id=self._current_edit_profile_id,
@@ -1098,6 +1124,7 @@ class ZaloLauncherGui:
             name=self.click_target_name_var.get(),
             selector_kind=self._resolved_click_target_selector_kind(),
             selector_value=self.click_target_selector_value_var.get(),
+            upload_file_path=self.click_target_upload_file_path_var.get(),
         )
 
         try:
@@ -1274,10 +1301,12 @@ class ZaloLauncherGui:
     def _handle_click_target_test_success(self, result: ClickZaloElementResult) -> None:
         self._click_target_test_in_progress = False
         self._update_click_target_action_states()
-        self._set_click_target_status(
-            f"Clicked '{result.clicked_target_name}' using selector '{result.resolved_selector}'.",
-            self.config.success_color,
+        status_message = (
+            f"Clicked '{result.clicked_target_name}' using selector '{result.resolved_selector}'."
         )
+        if result.uploaded_file_path:
+            status_message += f" Uploaded file '{result.uploaded_file_path}'."
+        self._set_click_target_status(status_message, self.config.success_color)
 
     def _handle_click_target_test_error(self, message: str) -> None:
         self._click_target_test_in_progress = False

@@ -17,6 +17,7 @@ class SavedZaloClickTarget:
     name: str
     selector_kind: str
     selector_value: str
+    upload_file_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)

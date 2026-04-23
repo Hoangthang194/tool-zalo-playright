@@ -4,6 +4,7 @@ from browser_automation.application.use_cases._click_target_support import (
     build_css_selector,
     extract_css_selector_from_html_snippet,
     looks_like_html_snippet,
+    normalize_optional_upload_file_path,
 )
 from browser_automation.domain.exceptions import ZaloClickTargetConflictError
 from browser_automation.domain.zalo_workspace import SavedZaloClickTarget
@@ -44,6 +45,22 @@ def test_extract_css_selector_from_html_snippet_rejects_invalid_html() -> None:
         match="HTML selector type requires a valid HTML snippet",
     ):
         extract_css_selector_from_html_snippet("contact-search-input")
+
+
+def test_normalize_optional_upload_file_path_accepts_existing_file(tmp_path) -> None:
+    upload_file = tmp_path / "photo.png"
+    upload_file.write_text("data", encoding="utf-8")
+
+    normalized = normalize_optional_upload_file_path(str(upload_file))
+
+    assert normalized == str(upload_file)
+
+
+def test_normalize_optional_upload_file_path_rejects_missing_file(tmp_path) -> None:
+    missing_file = tmp_path / "missing.png"
+
+    with pytest.raises(ZaloClickTargetConflictError, match="Upload file path not found"):
+        normalize_optional_upload_file_path(str(missing_file))
 
 
 def test_build_css_selector_supports_anim_data_id() -> None:

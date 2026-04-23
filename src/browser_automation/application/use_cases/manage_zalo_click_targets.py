@@ -6,6 +6,7 @@ from uuid import uuid4
 from browser_automation.application.ports.zalo_workspace_store import ZaloWorkspaceStore
 from browser_automation.application.use_cases._click_target_support import (
     normalize_click_target_name,
+    normalize_optional_upload_file_path,
     normalize_selector_kind,
     normalize_selector_value,
 )
@@ -24,6 +25,7 @@ class ZaloClickTargetUpsertRequest:
     name: str
     selector_kind: str
     selector_value: str
+    upload_file_path: str = ""
     click_target_id: str | None = None
 
 
@@ -57,6 +59,7 @@ class ZaloClickTargetManagerUseCase:
         target_name = normalize_click_target_name(request.name)
         selector_kind = normalize_selector_kind(request.selector_kind)
         selector_value = normalize_selector_value(request.selector_value)
+        upload_file_path = normalize_optional_upload_file_path(request.upload_file_path)
 
         self._ensure_unique_name(target_name, request.click_target_id, library)
 
@@ -65,6 +68,7 @@ class ZaloClickTargetManagerUseCase:
             name=target_name,
             selector_kind=selector_kind,
             selector_value=selector_value,
+            upload_file_path=upload_file_path,
         )
         next_targets = self._replace_or_append_target(click_target, library.click_targets)
         updated_library = ZaloWorkspaceLibrary(

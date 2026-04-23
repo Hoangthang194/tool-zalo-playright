@@ -98,6 +98,7 @@ class JsonZaloWorkspaceStore:
                     "name": click_target.name,
                     "selector_kind": click_target.selector_kind,
                     "selector_value": click_target.selector_value,
+                    "upload_file_path": click_target.upload_file_path,
                 }
                 for click_target in library.click_targets
             ],
@@ -138,6 +139,7 @@ class JsonZaloWorkspaceStore:
         name = self._optional_str(payload.get("name"))
         selector_kind = self._optional_str(payload.get("selector_kind"))
         selector_value = self._optional_str(payload.get("selector_value"))
+        upload_file_path = self._optional_str(payload.get("upload_file_path")) or ""
         if not all((click_target_id, name, selector_kind, selector_value)):
             return None
 
@@ -146,6 +148,7 @@ class JsonZaloWorkspaceStore:
             name=name,
             selector_kind=selector_kind,
             selector_value=selector_value,
+            upload_file_path=upload_file_path,
         )
 
     def _optional_str(self, value: Any) -> str | None:

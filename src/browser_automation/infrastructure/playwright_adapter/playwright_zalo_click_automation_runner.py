@@ -54,7 +54,15 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
                 for click_target in click_targets:
                     css_selector = build_css_selector(click_target)
                     locator = page.locator(css_selector).first
-                    self._click_locator(locator, timeout_seconds=timeout_seconds)
+                    if click_target.upload_file_path:
+                        self._handle_file_target(
+                            page,
+                            locator,
+                            upload_file_path=click_target.upload_file_path,
+                            timeout_seconds=timeout_seconds,
+                        )
+                    else:
+                        self._click_locator(locator, timeout_seconds=timeout_seconds)
                     clicked_target_names.append(click_target.name)
 
                 return ClickAutomationResult(
@@ -124,3 +132,40 @@ class PlaywrightZaloClickAutomationRunner(ZaloClickAutomationRunner):
                 }
                 """
             )
+
+    def _handle_file_target(
+        self,
+        page,
+        locator,
+        *,
+        upload_file_path: str,
+        timeout_seconds: float,
+    ) -> None:
+        timeout_ms = int(timeout_seconds * 1000)
+        locator.wait_for(state="attached", timeout=timeout_ms)
+
+        try:
+            element_info = locator.evaluate(
+                """
+                (element) => ({
+                    tag: (element.tagName || "").toLowerCase(),
+                    type: (element.getAttribute("type") || "").toLowerCase(),
+                })
+                """
+            )
+        except Exception:  # noqa: BLE001
+            element_info = {"tag": "", "type": ""}
+
+        if element_info.get("tag") == "input" and element_info.get("type") == "file":
+            locator.set_input_files(upload_file_path, timeout=timeout_ms)
+            return
+
+        try:
+            with page.expect_file_chooser(timeout=timeout_ms) as file_chooser_info:
+                self._click_locator(locator, timeout_seconds=timeout_seconds)
+            file_chooser_info.value.set_files(upload_file_path, timeout=timeout_ms)
+            return
+        except Exception as exc:  # noqa: BLE001
+            raise ZaloClickAutomationError(
+                "The selected element did not expose a file chooser for upload automation."
+            ) from exc
