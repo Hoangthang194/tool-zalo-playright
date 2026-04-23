@@ -16,9 +16,11 @@ from browser_automation.application.ports.chrome_window_arranger import ChromeWi
 from browser_automation.application.ports.saved_profile_library_store import (
     SavedProfileLibraryStore,
 )
+from browser_automation.application.use_cases._saved_profile_launch_support import (
+    SavedProfileLaunchSupport,
+)
 from browser_automation.domain.exceptions import (
     ChromeLaunchError,
-    LauncherValidationError,
     SavedProfileConflictError,
     SavedProfileNotFoundError,
     SettingsPersistenceError,
@@ -32,12 +34,6 @@ from browser_automation.domain.zalo_launcher import (
     WindowPlacement,
 )
 
-_SUPPORTED_CHROME_EXECUTABLE_NAMES = {
-    "chrome.exe",
-    "chrome",
-    "google-chrome",
-    "google-chrome-stable",
-}
 DEFAULT_GRID_COLUMNS = 4
 DEFAULT_GRID_ROWS = 2
 DEFAULT_GRID_LAUNCH_LIMIT = DEFAULT_GRID_COLUMNS * DEFAULT_GRID_ROWS
@@ -100,6 +96,7 @@ class ZaloProfileManagerUseCase:
         self._chrome_discovery = chrome_discovery
         self._chrome_launcher = chrome_launcher
         self._chrome_window_arranger = chrome_window_arranger
+        self._launch_support = SavedProfileLaunchSupport(chrome_discovery)
 
     def load_state(self) -> ZaloProfileManagerState:
         return self._build_state(self._normalized_library(self._library_store.load()))
@@ -107,9 +104,9 @@ class ZaloProfileManagerUseCase:
     def save_profile(self, request: SavedProfileUpsertRequest) -> ZaloProfileManagerState:
         library = self._normalized_library(self._library_store.load())
         profile_name = self._normalize_name(request.name)
-        chrome_executable = self._resolve_chrome_executable(request.chrome_executable)
-        profile_path = self._resolve_profile_path(request.profile_path)
-        self._validate_target_url(request.target_url)
+        chrome_executable = self._launch_support.resolve_chrome_executable(request.chrome_executable)
+        profile_path = self._launch_support.resolve_profile_path(request.profile_path)
+        self._launch_support.validate_target_url(request.target_url)
 
         self._ensure_unique_name(profile_name, request.profile_id, library)
         self._ensure_unique_profile_path(profile_path, request.profile_id, library)
@@ -309,16 +306,8 @@ class ZaloProfileManagerUseCase:
         *,
         window_placement: WindowPlacement | None = None,
     ) -> ChromeLaunchConfig:
-        chrome_executable = self._resolve_chrome_executable(profile.chrome_executable)
-        profile_path = self._resolve_profile_path(profile.profile_path)
-        self._validate_target_url(profile.target_url)
-
-        return ChromeLaunchConfig(
-            chrome_executable=chrome_executable,
-            user_data_dir=profile_path.parent,
-            profile_directory=profile_path.name,
-            target_url=profile.target_url,
-            new_window=True,
+        return self._launch_support.prepare_launch_config(
+            profile,
             window_placement=window_placement,
         )
 
@@ -329,6 +318,8 @@ class ZaloProfileManagerUseCase:
             profile_directory=config.profile_directory,
             target_url=config.target_url,
             settings_persisted=True,
+            proxy_server=config.proxy_server,
+            remote_debugging_port=config.remote_debugging_port,
             window_placement=config.window_placement,
         )
 
@@ -384,65 +375,6 @@ class ZaloProfileManagerUseCase:
         if not profile_name:
             raise SavedProfileConflictError("Profile name is required.")
         return profile_name
-
-    def _resolve_chrome_executable(self, value: str | None) -> Path:
-        raw_value = (value or "").strip()
-        if raw_value:
-            chrome_executable = Path(raw_value).expanduser()
-        else:
-            discovered = self._chrome_discovery.discover_executable()
-            if discovered is None:
-                raise LauncherValidationError(
-                    "Google Chrome could not be found automatically. Select the Chrome executable first."
-                )
-            chrome_executable = discovered
-
-        if not chrome_executable.is_file():
-            raise LauncherValidationError(f"Chrome executable not found: {chrome_executable}")
-        if chrome_executable.name.lower() not in _SUPPORTED_CHROME_EXECUTABLE_NAMES:
-            raise LauncherValidationError(
-                f"Selected executable does not look like Google Chrome: {chrome_executable}"
-            )
-        return chrome_executable
-
-    def _resolve_profile_path(self, value: str) -> Path:
-        raw_value = value.strip()
-        if not raw_value:
-            raise LauncherValidationError("Chrome profile path is required.")
-
-        profile_path = Path(raw_value).expanduser()
-        if not profile_path.is_absolute():
-            raise LauncherValidationError("Chrome profile path must be an absolute path.")
-        profile_path = profile_path.resolve(strict=False)
-
-        if not profile_path.is_dir():
-            raise LauncherValidationError(f"Chrome profile path not found: {profile_path}")
-        if profile_path.name.casefold() == "user data":
-            raise LauncherValidationError(
-                "Select the actual Chrome profile folder, for example '...\\User Data\\Profile 1', not the root 'User Data' folder."
-            )
-        if not self._looks_like_profile_directory(profile_path):
-            raise LauncherValidationError(
-                "Selected path does not look like a Chrome profile folder."
-            )
-        return profile_path
-
-    def _looks_like_profile_directory(self, profile_path: Path) -> bool:
-        if (profile_path / "Preferences").is_file():
-            return True
-        profile_name = profile_path.name
-        if profile_name == "Default":
-            return True
-        if profile_name.startswith("Profile "):
-            suffix = profile_name.removeprefix("Profile ").strip()
-            return suffix.isdigit()
-        return False
-
-    def _validate_target_url(self, value: str) -> None:
-        if value != DEFAULT_ZALO_URL:
-            raise LauncherValidationError(
-                f"Target URL is fixed to '{DEFAULT_ZALO_URL}' for the Zalo launcher."
-            )
 
     def _ensure_unique_name(
         self,

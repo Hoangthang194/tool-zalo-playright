@@ -64,6 +64,25 @@ def test_subprocess_chrome_process_launcher_includes_window_size_and_position() 
     ]
 
 
+def test_subprocess_chrome_process_launcher_includes_proxy_server() -> None:
+    launcher = SubprocessChromeProcessLauncher()
+    config = ChromeLaunchConfig(
+        chrome_executable=Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe"),
+        user_data_dir=Path(r"C:\Users\demo\AppData\Local\Google\Chrome\User Data"),
+        profile_directory="Profile 3",
+        proxy_server="127.0.0.1:8080",
+    )
+
+    assert launcher.build_command(config) == [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "--new-window",
+        "--proxy-server=127.0.0.1:8080",
+        r"--user-data-dir=C:\Users\demo\AppData\Local\Google\Chrome\User Data",
+        "--profile-directory=Profile 3",
+        "https://chat.zalo.me",
+    ]
+
+
 def test_subprocess_chrome_process_launcher_wraps_os_errors(monkeypatch) -> None:
     launcher = SubprocessChromeProcessLauncher()
     config = ChromeLaunchConfig(

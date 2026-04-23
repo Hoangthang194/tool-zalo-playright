@@ -1,11 +1,8 @@
 from browser_automation.application.use_cases.manage_zalo_workspace import (
-    CookieUpsertRequest,
     ZaloAccountUpsertRequest,
     ZaloWorkspaceManagerUseCase,
 )
 from browser_automation.domain.exceptions import (
-    SavedCookieConflictError,
-    SavedCookieNotFoundError,
     SavedZaloAccountConflictError,
     SavedZaloAccountNotFoundError,
 )
@@ -23,62 +20,15 @@ class InMemoryZaloWorkspaceStore:
         self.library = library
 
 
-def test_workspace_use_case_saves_and_updates_cookie_entries() -> None:
-    store = InMemoryZaloWorkspaceStore()
-    use_case = ZaloWorkspaceManagerUseCase(store)
-
-    created_state = use_case.save_cookie(
-        CookieUpsertRequest(
-            name="Session A",
-            raw_cookie='{"sid":"abc"}',
-            profile_id="profile-1",
-            notes="Primary cookie",
-        )
-    )
-    created_cookie = created_state.cookies[0]
-
-    updated_state = use_case.save_cookie(
-        CookieUpsertRequest(
-            cookie_id=created_cookie.id,
-            name="Session A Updated",
-            raw_cookie='{"sid":"xyz"}',
-            profile_id="profile-2",
-            notes="Updated cookie",
-        )
-    )
-
-    assert len(updated_state.cookies) == 1
-    assert updated_state.cookies[0].id == created_cookie.id
-    assert updated_state.cookies[0].name == "Session A Updated"
-    assert updated_state.cookies[0].profile_id == "profile-2"
-    assert updated_state.selected_cookie_id == created_cookie.id
-
-
-def test_workspace_use_case_rejects_duplicate_cookie_names() -> None:
-    store = InMemoryZaloWorkspaceStore()
-    use_case = ZaloWorkspaceManagerUseCase(store)
-
-    use_case.save_cookie(CookieUpsertRequest(name="Cookie One", raw_cookie="a=b"))
-
-    try:
-        use_case.save_cookie(CookieUpsertRequest(name="cookie one", raw_cookie="c=d"))
-    except SavedCookieConflictError as exc:
-        assert "already exists" in str(exc)
-    else:
-        raise AssertionError("Expected duplicate cookie name conflict")
-
-
 def test_workspace_use_case_saves_and_updates_accounts() -> None:
     store = InMemoryZaloWorkspaceStore()
     use_case = ZaloWorkspaceManagerUseCase(store)
 
     created_state = use_case.save_account(
         ZaloAccountUpsertRequest(
-            name="Zalo 1",
-            phone_number="0900000001",
+            name="Profile One",
             profile_id="profile-1",
-            cookie_id="cookie-1",
-            notes="VIP",
+            proxy="127.0.0.1:8080",
         )
     )
     created_account = created_state.accounts[0]
@@ -86,54 +36,80 @@ def test_workspace_use_case_saves_and_updates_accounts() -> None:
     updated_state = use_case.save_account(
         ZaloAccountUpsertRequest(
             account_id=created_account.id,
-            name="Zalo 1 Updated",
-            phone_number="0900000002",
-            profile_id="profile-2",
-            cookie_id="cookie-2",
-            notes="Updated",
+            name="Profile One",
+            profile_id="profile-1",
+            proxy="user:pass@10.0.0.2:9000",
         )
     )
 
     assert len(updated_state.accounts) == 1
     assert updated_state.accounts[0].id == created_account.id
-    assert updated_state.accounts[0].name == "Zalo 1 Updated"
-    assert updated_state.accounts[0].cookie_id == "cookie-2"
+    assert updated_state.accounts[0].name == "Profile One"
+    assert updated_state.accounts[0].profile_id == "profile-1"
+    assert updated_state.accounts[0].proxy == "user:pass@10.0.0.2:9000"
     assert updated_state.selected_account_id == created_account.id
 
 
-def test_workspace_use_case_rejects_duplicate_account_names() -> None:
+def test_workspace_use_case_rejects_duplicate_profile_links() -> None:
     store = InMemoryZaloWorkspaceStore()
     use_case = ZaloWorkspaceManagerUseCase(store)
 
-    use_case.save_account(ZaloAccountUpsertRequest(name="Sales"))
+    use_case.save_account(
+        ZaloAccountUpsertRequest(
+            name="Profile One",
+            profile_id="profile-1",
+            proxy="127.0.0.1:8000",
+        )
+    )
 
     try:
-        use_case.save_account(ZaloAccountUpsertRequest(name="sales"))
+        use_case.save_account(
+            ZaloAccountUpsertRequest(
+                name="Profile One Duplicate",
+                profile_id="profile-1",
+                proxy="127.0.0.1:9000",
+            )
+        )
     except SavedZaloAccountConflictError as exc:
         assert "already exists" in str(exc)
     else:
-        raise AssertionError("Expected duplicate account name conflict")
+        raise AssertionError("Expected duplicate linked profile conflict")
 
 
-def test_workspace_use_case_deletes_cookie_and_account_entries() -> None:
+def test_workspace_use_case_requires_linked_profile() -> None:
     store = InMemoryZaloWorkspaceStore()
     use_case = ZaloWorkspaceManagerUseCase(store)
 
-    cookie_state = use_case.save_cookie(CookieUpsertRequest(name="Cookie A", raw_cookie="x=y"))
-    account_state = use_case.save_account(ZaloAccountUpsertRequest(name="Account A"))
-
-    state_after_cookie_delete = use_case.delete_cookie(cookie_state.selected_cookie_id)
-    state_after_account_delete = use_case.delete_account(account_state.selected_account_id)
-
-    assert state_after_cookie_delete.cookies == ()
-    assert state_after_account_delete.accounts == ()
-
     try:
-        use_case.delete_cookie("missing")
-    except SavedCookieNotFoundError:
-        pass
+        use_case.save_account(
+            ZaloAccountUpsertRequest(
+                name="Missing Profile",
+                proxy="127.0.0.1:8080",
+            )
+        )
+    except SavedZaloAccountConflictError as exc:
+        assert "linked profile is required" in str(exc).lower()
     else:
-        raise AssertionError("Expected cookie not found")
+        raise AssertionError("Expected missing profile conflict")
+
+
+def test_workspace_use_case_deletes_and_selects_accounts() -> None:
+    store = InMemoryZaloWorkspaceStore()
+    use_case = ZaloWorkspaceManagerUseCase(store)
+
+    first_state = use_case.save_account(
+        ZaloAccountUpsertRequest(name="Profile A", profile_id="profile-a", proxy="10.0.0.1:9000")
+    )
+    second_state = use_case.save_account(
+        ZaloAccountUpsertRequest(name="Profile B", profile_id="profile-b", proxy="")
+    )
+
+    selected_state = use_case.select_account(first_state.selected_account_id)
+    state_after_delete = use_case.delete_account(second_state.selected_account_id)
+
+    assert selected_state.selected_account_id == first_state.selected_account_id
+    assert len(state_after_delete.accounts) == 1
+    assert state_after_delete.accounts[0].profile_id == "profile-a"
 
     try:
         use_case.delete_account("missing")

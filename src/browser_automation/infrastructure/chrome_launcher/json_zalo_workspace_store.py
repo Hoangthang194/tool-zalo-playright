@@ -7,8 +7,8 @@ from typing import Any, Mapping
 
 from browser_automation.domain.exceptions import SettingsPersistenceError
 from browser_automation.domain.zalo_workspace import (
-    SavedCookieEntry,
     SavedZaloAccount,
+    SavedZaloClickTarget,
     ZaloWorkspaceLibrary,
 )
 
@@ -41,19 +41,9 @@ class JsonZaloWorkspaceStore:
         if not isinstance(payload, dict):
             return ZaloWorkspaceLibrary()
 
-        cookies_payload = payload.get("cookies")
         accounts_payload = payload.get("accounts")
-        if not isinstance(cookies_payload, list) or not isinstance(accounts_payload, list):
+        if not isinstance(accounts_payload, list):
             return ZaloWorkspaceLibrary()
-
-        cookies: list[SavedCookieEntry] = []
-        seen_cookie_ids: set[str] = set()
-        for cookie_payload in cookies_payload:
-            cookie = self._map_cookie(cookie_payload)
-            if cookie is None or cookie.id in seen_cookie_ids:
-                continue
-            cookies.append(cookie)
-            seen_cookie_ids.add(cookie.id)
 
         accounts: list[SavedZaloAccount] = []
         seen_account_ids: set[str] = set()
@@ -64,45 +54,52 @@ class JsonZaloWorkspaceStore:
             accounts.append(account)
             seen_account_ids.add(account.id)
 
-        selected_cookie_id = self._optional_str(payload.get("selected_cookie_id"))
-        if selected_cookie_id not in seen_cookie_ids:
-            selected_cookie_id = cookies[0].id if cookies else None
+        click_targets_payload = payload.get("click_targets")
+        click_targets: list[SavedZaloClickTarget] = []
+        seen_click_target_ids: set[str] = set()
+        if isinstance(click_targets_payload, list):
+            for click_target_payload in click_targets_payload:
+                click_target = self._map_click_target(click_target_payload)
+                if click_target is None or click_target.id in seen_click_target_ids:
+                    continue
+                click_targets.append(click_target)
+                seen_click_target_ids.add(click_target.id)
 
         selected_account_id = self._optional_str(payload.get("selected_account_id"))
         if selected_account_id not in seen_account_ids:
             selected_account_id = accounts[0].id if accounts else None
+        selected_click_target_id = self._optional_str(payload.get("selected_click_target_id"))
+        if selected_click_target_id not in seen_click_target_ids:
+            selected_click_target_id = click_targets[0].id if click_targets else None
 
         return ZaloWorkspaceLibrary(
-            cookies=tuple(cookies),
             accounts=tuple(accounts),
-            selected_cookie_id=selected_cookie_id,
+            click_targets=tuple(click_targets),
             selected_account_id=selected_account_id,
+            selected_click_target_id=selected_click_target_id,
         )
 
     def save(self, library: ZaloWorkspaceLibrary) -> None:
         payload = {
-            "selected_cookie_id": library.selected_cookie_id,
             "selected_account_id": library.selected_account_id,
-            "cookies": [
-                {
-                    "id": cookie.id,
-                    "name": cookie.name,
-                    "raw_cookie": cookie.raw_cookie,
-                    "profile_id": cookie.profile_id,
-                    "notes": cookie.notes,
-                }
-                for cookie in library.cookies
-            ],
             "accounts": [
                 {
                     "id": account.id,
                     "name": account.name,
-                    "phone_number": account.phone_number,
                     "profile_id": account.profile_id,
-                    "cookie_id": account.cookie_id,
-                    "notes": account.notes,
+                    "proxy": account.proxy,
                 }
                 for account in library.accounts
+            ],
+            "selected_click_target_id": library.selected_click_target_id,
+            "click_targets": [
+                {
+                    "id": click_target.id,
+                    "name": click_target.name,
+                    "selector_kind": click_target.selector_kind,
+                    "selector_value": click_target.selector_value,
+                }
+                for click_target in library.click_targets
             ],
         }
 
@@ -114,44 +111,41 @@ class JsonZaloWorkspaceStore:
                 f"Could not persist Zalo workspace data to '{self._path}'."
             ) from exc
 
-    def _map_cookie(self, payload: Any) -> SavedCookieEntry | None:
-        if not isinstance(payload, dict):
-            return None
-
-        cookie_id = self._optional_str(payload.get("id"))
-        name = self._optional_str(payload.get("name"))
-        raw_cookie = self._optional_str(payload.get("raw_cookie"))
-        profile_id = self._optional_str(payload.get("profile_id"))
-        notes = self._optional_str(payload.get("notes")) or ""
-        if not all((cookie_id, name, raw_cookie)):
-            return None
-        return SavedCookieEntry(
-            id=cookie_id,
-            name=name,
-            raw_cookie=raw_cookie,
-            profile_id=profile_id,
-            notes=notes,
-        )
-
     def _map_account(self, payload: Any) -> SavedZaloAccount | None:
         if not isinstance(payload, dict):
             return None
 
         account_id = self._optional_str(payload.get("id"))
         name = self._optional_str(payload.get("name"))
-        phone_number = self._optional_str(payload.get("phone_number")) or ""
         profile_id = self._optional_str(payload.get("profile_id"))
-        cookie_id = self._optional_str(payload.get("cookie_id"))
-        notes = self._optional_str(payload.get("notes")) or ""
-        if not all((account_id, name)):
+        proxy = self._optional_str(payload.get("proxy")) or ""
+        if not account_id:
             return None
+        if name is None:
+            name = profile_id or account_id
         return SavedZaloAccount(
             id=account_id,
             name=name,
-            phone_number=phone_number,
             profile_id=profile_id,
-            cookie_id=cookie_id,
-            notes=notes,
+            proxy=proxy,
+        )
+
+    def _map_click_target(self, payload: Any) -> SavedZaloClickTarget | None:
+        if not isinstance(payload, dict):
+            return None
+
+        click_target_id = self._optional_str(payload.get("id"))
+        name = self._optional_str(payload.get("name"))
+        selector_kind = self._optional_str(payload.get("selector_kind"))
+        selector_value = self._optional_str(payload.get("selector_value"))
+        if not all((click_target_id, name, selector_kind, selector_value)):
+            return None
+
+        return SavedZaloClickTarget(
+            id=click_target_id,
+            name=name,
+            selector_kind=selector_kind,
+            selector_value=selector_value,
         )
 
     def _optional_str(self, value: Any) -> str | None:

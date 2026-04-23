@@ -110,6 +110,8 @@ class LaunchZaloChatUseCase:
             profile_directory=config.profile_directory,
             target_url=config.target_url,
             settings_persisted=settings_persisted,
+            proxy_server=config.proxy_server,
+            remote_debugging_port=config.remote_debugging_port,
         )
 
     def _resolve_chrome_executable(self, value: str | None) -> Path:

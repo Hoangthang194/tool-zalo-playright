@@ -21,6 +21,8 @@ class ChromeLaunchConfig:
     profile_directory: str | None = None
     target_url: str = DEFAULT_ZALO_URL
     new_window: bool = True
+    proxy_server: str | None = None
+    remote_debugging_port: int | None = None
     window_placement: WindowPlacement | None = None
 
 
@@ -31,6 +33,8 @@ class ChromeLaunchResult:
     profile_directory: str | None
     target_url: str
     settings_persisted: bool = True
+    proxy_server: str | None = None
+    remote_debugging_port: int | None = None
     window_placement: WindowPlacement | None = None
 
 

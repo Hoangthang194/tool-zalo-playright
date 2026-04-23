@@ -20,10 +20,14 @@ class SubprocessChromeProcessLauncher:
                     f"--window-size={config.window_placement.width},{config.window_placement.height}",
                 ]
             )
+        if config.proxy_server:
+            command.append(f"--proxy-server={config.proxy_server}")
+        if config.remote_debugging_port is not None:
+            command.append(f"--remote-debugging-port={config.remote_debugging_port}")
         command.extend(
             [
-            f"--user-data-dir={config.user_data_dir}",
-            config.target_url,
+                f"--user-data-dir={config.user_data_dir}",
+                config.target_url,
             ]
         )
         if config.profile_directory:

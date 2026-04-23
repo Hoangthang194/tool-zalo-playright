@@ -22,6 +22,22 @@ class ChromeLaunchError(RuntimeError):
     """Raised when Chrome cannot be started for the Zalo launcher."""
 
 
+class ProxyConnectionError(RuntimeError):
+    """Raised when a proxy connectivity test fails."""
+
+
+class ZaloClickTargetConflictError(ValueError):
+    """Raised when a saved click target conflicts with an existing entry."""
+
+
+class ZaloClickTargetNotFoundError(ValueError):
+    """Raised when a requested click target does not exist."""
+
+
+class ZaloClickAutomationError(RuntimeError):
+    """Raised when post-launch selector automation fails."""
+
+
 class SettingsPersistenceError(RuntimeError):
     """Raised when launcher settings cannot be persisted."""
 

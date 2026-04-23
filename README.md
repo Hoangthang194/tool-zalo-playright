@@ -64,18 +64,16 @@ python -m browser_automation examples\sample_workflow.json
 browser-automation-zalo-gui
 ```
 
-The Zalo GUI now has three tabs:
+The Zalo GUI now has two tabs:
 
-- `Profiles`: save Chrome profiles and launch `https://chat.zalo.me`
-- `Cookies`: store raw cookie payloads and optional linked profiles
-- `Zalo Accounts`: store account records with optional linked profiles and cookies
+- `Profiles`: save reusable Chrome profile definitions
+- `Zalo Accounts`: store one proxy setting for each linked profile and launch `https://chat.zalo.me`
 
-The `Profiles` tab lets you save multiple Chrome profile folders such as `...\User Data\Profile 1`, select one, and launch real Google Chrome into `https://chat.zalo.me`.
+The `Profiles` tab lets you save multiple Chrome profile folders such as `...\User Data\Profile 1` and use them later inside the account workflow.
+The `Zalo Accounts` tab lets you pick a saved profile, assign an optional proxy such as `127.0.0.1:8080` or `user:pass@host:port`, and launch real Google Chrome into `https://chat.zalo.me`.
 
-Launching one saved profile opens Chrome with deterministic window bounds based on the first `4x2` grid cell instead of Chrome's arbitrary restored size.
-If another launched Chrome window is already visible, the next single-profile launch uses the next grid cell beside it instead of overlapping the first one.
-
-You can also `Ctrl` / `Shift` select multiple saved profiles and launch them together. The GUI opens the first `8` selected profiles with grid-sized windows and arranges them into a fixed `4 columns x 2 rows` layout on the primary monitor.
+Launching one saved account opens Chrome with deterministic window bounds based on the first `4x2` grid cell instead of Chrome's arbitrary restored size.
+If another launched Chrome window is already visible, the next account launch uses the next grid cell beside it instead of overlapping the first one.
 
 Windows defaults:
 
@@ -83,7 +81,6 @@ Windows defaults:
 - Chrome profiles usually live under `%LOCALAPPDATA%\Google\Chrome\User Data`
 - Examples of profile folders are `%LOCALAPPDATA%\Google\Chrome\User Data\Default` and `%LOCALAPPDATA%\Google\Chrome\User Data\Profile 1`
 - In the GUI, save the full profile folder path, not just the parent `User Data` directory
-- For grid launch, the window order follows the saved-profile list order, left to right and then top to bottom
 
 The saved profile library is stored in:
 
@@ -91,7 +88,7 @@ The saved profile library is stored in:
 %APPDATA%\browser-automation\zalo-profiles.json
 ```
 
-The cookie and account library is stored in:
+The Zalo account workspace is stored in:
 
 ```text
 %APPDATA%\browser-automation\zalo-workspace.json
@@ -168,5 +165,7 @@ This repository now includes Spec Kit-style artifact sets for the implemented wo
 - Feature spec: `specs/005-zalo-tabbed-cookie-account-manager/spec.md`
 - Technical plan: `specs/005-zalo-tabbed-cookie-account-manager/plan.md`
 - Tasks: `specs/005-zalo-tabbed-cookie-account-manager/tasks.md`
+- Feature spec: `specs/006-zalo-zca-session-webhook-bridge/spec.md`
+- Feature spec: `specs/007-zalo-manual-click-target-testing/spec.md`
 
 These files are intended to be the source of truth for future changes to the workflow-driven browser automation tool.

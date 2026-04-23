@@ -1,6 +1,6 @@
 from browser_automation.domain.zalo_workspace import (
-    SavedCookieEntry,
     SavedZaloAccount,
+    SavedZaloClickTarget,
     ZaloWorkspaceLibrary,
 )
 from browser_automation.infrastructure.chrome_launcher.json_zalo_workspace_store import (
@@ -8,30 +8,27 @@ from browser_automation.infrastructure.chrome_launcher.json_zalo_workspace_store
 )
 
 
-def test_json_zalo_workspace_store_round_trips_cookie_and_account_data(tmp_path) -> None:
+def test_json_zalo_workspace_store_round_trips_account_proxy_data(tmp_path) -> None:
     store = JsonZaloWorkspaceStore(path=tmp_path / "zalo-workspace.json")
     library = ZaloWorkspaceLibrary(
-        cookies=(
-            SavedCookieEntry(
-                id="cookie-1",
-                name="Cookie A",
-                raw_cookie='{"sid":"abc"}',
-                profile_id="profile-1",
-                notes="note a",
-            ),
-        ),
         accounts=(
             SavedZaloAccount(
                 id="account-1",
-                name="Account A",
-                phone_number="0901",
+                name="Profile One",
                 profile_id="profile-1",
-                cookie_id="cookie-1",
-                notes="note b",
+                proxy="user:pass@127.0.0.1:9000",
             ),
         ),
-        selected_cookie_id="cookie-1",
+        click_targets=(
+            SavedZaloClickTarget(
+                id="target-1",
+                name="Open Menu",
+                selector_kind="class",
+                selector_value="menu-item active",
+            ),
+        ),
         selected_account_id="account-1",
+        selected_click_target_id="target-1",
     )
 
     store.save(library)
@@ -45,15 +42,10 @@ def test_json_zalo_workspace_store_skips_invalid_entries(tmp_path) -> None:
     workspace_path.write_text(
         """
         {
-          "selected_cookie_id": "cookie-1",
           "selected_account_id": "account-1",
-          "cookies": [
-            {"id": "cookie-1", "name": "Cookie A", "raw_cookie": "a=b"},
-            {"id": "", "name": "Broken", "raw_cookie": "c=d"}
-          ],
           "accounts": [
-            {"id": "account-1", "name": "Account A"},
-            {"id": "account-2", "phone_number": "0902"}
+            {"id": "account-1", "name": "Profile One", "profile_id": "profile-1", "proxy": "1.2.3.4:80"},
+            {"id": "", "name": "Broken", "profile_id": "profile-2"}
           ]
         }
         """,
@@ -62,7 +54,58 @@ def test_json_zalo_workspace_store_skips_invalid_entries(tmp_path) -> None:
 
     loaded = JsonZaloWorkspaceStore(path=workspace_path).load()
 
-    assert len(loaded.cookies) == 1
-    assert loaded.cookies[0].id == "cookie-1"
     assert len(loaded.accounts) == 1
     assert loaded.accounts[0].id == "account-1"
+
+
+def test_json_zalo_workspace_store_loads_accounts_from_legacy_payload_shape(tmp_path) -> None:
+    workspace_path = tmp_path / "zalo-workspace.json"
+    workspace_path.write_text(
+        """
+        {
+          "selected_cookie_id": "cookie-1",
+          "selected_account_id": "account-legacy",
+          "cookies": [
+            {"id": "cookie-1", "name": "Cookie A", "raw_cookie": "a=b"}
+          ],
+          "accounts": [
+            {"id": "account-legacy", "name": "Legacy Account", "profile_id": "profile-legacy", "phone_number": "0901", "notes": "old"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    loaded = JsonZaloWorkspaceStore(path=workspace_path).load()
+
+    assert len(loaded.accounts) == 1
+    assert loaded.accounts[0].name == "Legacy Account"
+    assert loaded.accounts[0].profile_id == "profile-legacy"
+    assert loaded.accounts[0].proxy == ""
+
+
+def test_json_zalo_workspace_store_loads_click_targets_when_present(tmp_path) -> None:
+    workspace_path = tmp_path / "zalo-workspace.json"
+    workspace_path.write_text(
+        """
+        {
+          "selected_account_id": "account-1",
+          "selected_click_target_id": "target-1",
+          "accounts": [
+            {"id": "account-1", "name": "Profile One", "profile_id": "profile-1", "proxy": ""}
+          ],
+          "click_targets": [
+            {"id": "target-1", "name": "Open Menu", "selector_kind": "class", "selector_value": "menu-item"},
+            {"id": "", "name": "Broken", "selector_kind": "id", "selector_value": "submit"}
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    loaded = JsonZaloWorkspaceStore(path=workspace_path).load()
+
+    assert len(loaded.click_targets) == 1
+    assert loaded.click_targets[0].id == "target-1"
+    assert loaded.click_targets[0].selector_kind == "class"
+    assert loaded.selected_click_target_id == "target-1"

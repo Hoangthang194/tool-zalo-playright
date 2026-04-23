@@ -5,7 +5,7 @@ import threading
 import tkinter as tk
 from dataclasses import dataclass
 from pathlib import Path
-from tkinter import filedialog, messagebox, scrolledtext
+from tkinter import filedialog, messagebox
 
 from browser_automation.application.use_cases.run_workflow import (
     RunAutomationWorkflowUseCase,
@@ -18,20 +18,21 @@ from browser_automation.infrastructure.playwright_adapter.playwright_browser_gat
     PlaywrightBrowserAutomationGateway,
 )
 from browser_automation.infrastructure.workflow_loader import JsonWorkflowDefinitionLoader
+from browser_automation.interfaces.gui.ui_components import (
+    SharedGuiFactory,
+    SharedGuiTheme,
+)
 
-@dataclass
-class GuiConfig:
+
+@dataclass(frozen=True, slots=True)
+class GuiConfig(SharedGuiTheme):
     title: str = "Browser Automation Tool"
     width: int = 800
     height: int = 600
-    primary_color: str = "#2c3e50"
-    secondary_color: str = "#34495e"
-    accent_color: str = "#3498db"
-    text_color: str = "#ecf0f1"
 
 
 class GuiLogHandler(logging.Handler):
-    def __init__(self, text_widget: scrolledtext.ScrolledText):
+    def __init__(self, text_widget):
         super().__init__()
         self.text_widget = text_widget
 
@@ -49,6 +50,7 @@ class AutomationGui:
     def __init__(self, root: tk.Tk):
         self.root = root
         self.config = GuiConfig()
+        self.ui = SharedGuiFactory(root, self.config)
         self.use_case = RunAutomationWorkflowUseCase(
             workflow_loader=JsonWorkflowDefinitionLoader(),
             browser_gateway=PlaywrightBrowserAutomationGateway(),
@@ -58,101 +60,63 @@ class AutomationGui:
         self._setup_logging()
 
     def _setup_window(self):
-        self.root.title(self.config.title)
-        self.root.geometry(f"{self.config.width}x{self.config.height}")
-        self.root.configure(bg=self.config.primary_color)
+        self.ui.configure_window(
+            self.root,
+            title=self.config.title,
+            width=self.config.width,
+            height=self.config.height,
+            min_width=760,
+            min_height=520,
+        )
 
     def _create_widgets(self):
-        # Main Layout
-        padding = 20
-        
-        # Header
-        header_frame = tk.Frame(self.root, bg=self.config.secondary_color, padx=padding, pady=padding)
-        header_frame.pack(fill=tk.X)
+        self.ui.create_header(
+            self.root,
+            title=self.config.title,
+            subtitle="Run a JSON workflow with the same shared desktop UI components used by the Zalo manager.",
+            wraplength=720,
+        )
 
-        tk.Label(
-            header_frame, 
-            text=self.config.title, 
-            font=("Helvetica", 18, "bold"),
-            bg=self.config.secondary_color,
-            fg=self.config.accent_color
-        ).pack(side=tk.LEFT)
-
-        # Content
-        content_frame = tk.Frame(self.root, bg=self.config.primary_color, padx=padding, pady=padding)
-        content_frame.pack(fill=tk.BOTH, expand=True)
+        content_frame = self.ui.create_content_frame(self.root)
 
         # File Selection
-        file_frame = tk.Frame(content_frame, bg=self.config.primary_color)
+        file_frame = self.ui.create_panel(content_frame)
         file_frame.pack(fill=tk.X, pady=(0, 10))
-
-        tk.Label(
-            file_frame, 
-            text="Workflow File:", 
-            bg=self.config.primary_color, 
-            fg=self.config.text_color
-        ).pack(side=tk.LEFT)
+        file_frame.grid_columnconfigure(1, weight=1)
 
         self.file_path_var = tk.StringVar()
-        entry = tk.Entry(
-            file_frame, 
-            textvariable=self.file_path_var, 
-            width=50,
-            bg=self.config.secondary_color,
-            fg=self.config.text_color,
-            insertbackground=self.config.text_color,
-            border=0
+        self.ui.grid_path_row(
+            file_frame,
+            row=0,
+            label="Workflow file",
+            variable=self.file_path_var,
+            button_text="Browse",
+            button_command=self._browse_file,
         )
-        entry.pack(side=tk.LEFT, padx=10)
-
-        tk.Button(
-            file_frame, 
-            text="Browse", 
-            command=self._browse_file,
-            bg=self.config.accent_color,
-            fg="white",
-            activebackground="#2980b9",
-            activeforeground="white",
-            relief=tk.FLAT,
-            padx=10
-        ).pack(side=tk.LEFT)
 
         # Actions
-        btn_frame = tk.Frame(content_frame, bg=self.config.primary_color)
+        btn_frame = tk.Frame(content_frame, bg=self.config.bg_color)
         btn_frame.pack(fill=tk.X, pady=10)
 
-        self.run_btn = tk.Button(
-            btn_frame, 
-            text="Run Workflow", 
+        self.run_btn = self.ui.create_button(
+            btn_frame,
+            text="Run Workflow",
             command=self._run_workflow_threaded,
-            bg="#27ae60",
-            fg="white",
-            activebackground="#2ecc71",
-            activeforeground="white",
-            relief=tk.FLAT,
-            font=("Helvetica", 10, "bold"),
             padx=20,
-            pady=5
+            pady=6,
+            variant="primary",
         )
         self.run_btn.pack(side=tk.LEFT)
 
         # Log Console
-        tk.Label(
-            content_frame, 
-            text="Execution Log:", 
-            bg=self.config.primary_color, 
-            fg=self.config.text_color
+        self.ui.create_body_label(
+            content_frame,
+            "Execution Log",
+            bg=self.config.bg_color,
+            fg=self.config.text_color,
         ).pack(anchor=tk.W, pady=(10, 5))
 
-        self.log_widget = scrolledtext.ScrolledText(
-            content_frame, 
-            height=15, 
-            bg="#1a252f", 
-            fg="#95a5a6",
-            font=("Consolas", 10),
-            state='disabled',
-            border=0
-        )
+        self.log_widget = self.ui.create_scrolled_log(content_frame, height=15)
         self.log_widget.pack(fill=tk.BOTH, expand=True)
 
     def _setup_logging(self):
