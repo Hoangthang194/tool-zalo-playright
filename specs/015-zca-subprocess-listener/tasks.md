@@ -1,0 +1,8 @@
+- [x] T001 Write spec and plan for ZCA subprocess listener.
+- [x] T002 Add failing tests for account-role migration and listener validation.
+- [x] T003 Add failing tests for subprocess listener protocol handling.
+- [x] T004 Implement account-role and workspace persistence changes.
+- [x] T005 Implement ZCA subprocess port, adapter, and use case.
+- [x] T006 Update GUI to use listener accounts and terminal-capable logging path.
+- [x] T007 Add Node adapter files and console run entrypoint.
+- [x] T008 Run test suite and document run commands.

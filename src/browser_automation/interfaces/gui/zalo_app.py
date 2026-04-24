@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import logging
 import threading
 import tkinter as tk
 from collections.abc import Sequence
@@ -13,8 +13,13 @@ from browser_automation.application.use_cases.launch_zalo_account import (
     LaunchSavedZaloAccountResult,
     LaunchZaloAccountUseCase,
 )
-from browser_automation.application.use_cases.ingest_zalo_message_webhook import (
-    IngestZaloMessageWebhookUseCase,
+from browser_automation.application.use_cases.monitor_zalo_live_events import (
+    format_zalo_live_event_log_entry,
+    format_zalo_live_event_status_message,
+)
+from browser_automation.application.use_cases.monitor_zca_listener import (
+    StartZcaListenerRequest,
+    ZcaListenerMonitorUseCase,
 )
 from browser_automation.application.use_cases.click_zalo_element import (
     DEFAULT_CLICK_ELEMENT_TIMEOUT_SECONDS,
@@ -60,6 +65,7 @@ from browser_automation.domain.exceptions import (
     ZaloClickTargetNotFoundError,
 )
 from browser_automation.domain.zalo_launcher import DEFAULT_ZALO_URL, SavedChromeProfile
+from browser_automation.domain.zalo_live_events import ZaloLiveEventLogEntry
 from browser_automation.domain.zalo_workspace import SavedZaloAccount, SavedZaloClickTarget
 from browser_automation.infrastructure.chrome_launcher.chrome_installation_discovery import (
     DefaultChromeInstallationDiscovery,
@@ -80,9 +86,6 @@ from browser_automation.infrastructure.persistence.mariadb_saved_profile_library
 from browser_automation.infrastructure.persistence.mariadb_message_store import (
     MariaDbMessageStore,
 )
-from browser_automation.infrastructure.webhook.local_zalo_message_webhook_server import (
-    LocalZaloMessageWebhookServer,
-)
 from browser_automation.infrastructure.chrome_launcher.subprocess_chrome_process_launcher import (
     SubprocessChromeProcessLauncher,
 )
@@ -92,6 +95,9 @@ from browser_automation.infrastructure.playwright_adapter.playwright_zalo_click_
 from browser_automation.infrastructure.network.urllib_proxy_connectivity_checker import (
     UrllibProxyConnectivityChecker,
 )
+from browser_automation.infrastructure.zca.subprocess_zca_listener_process import (
+    SubprocessZcaListenerProcess,
+)
 from browser_automation.interfaces.gui.ui_components import (
     SharedGuiFactory,
     SharedGuiTheme,
@@ -99,6 +105,9 @@ from browser_automation.interfaces.gui.ui_components import (
 from browser_automation.infrastructure.chrome_launcher.windows_chrome_window_arranger import (
     WindowsChromeWindowArranger,
 )
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -148,7 +157,15 @@ class ZaloLauncherGui:
         self.proxy_test_use_case = TestProxyConnectionUseCase(
             proxy_checker=UrllibProxyConnectivityChecker(),
         )
-        self.message_webhook_server: LocalZaloMessageWebhookServer | None = None
+        self.zca_listener_process = SubprocessZcaListenerProcess()
+        self.zca_listener_use_case = (
+            None
+            if self._mariadb_connection_factory is None
+            else ZcaListenerMonitorUseCase(
+                self.zca_listener_process,
+                MariaDbMessageStore(self._mariadb_connection_factory),
+            )
+        )
 
         self._launch_in_progress = False
         self._proxy_test_in_progress = False
@@ -174,6 +191,9 @@ class ZaloLauncherGui:
         self._click_target_state: ZaloClickTargetManagerState | None = None
         self._last_account_remote_debugging_port: int | None = None
         self._last_account_target_url: str = DEFAULT_ZALO_URL
+        self._last_live_event_account_label: str = ""
+        self._account_live_log_lines: list[str] = []
+        self._last_account_status_event: ZaloLiveEventLogEntry | None = None
 
         self._profile_name_to_id: dict[str, str] = {}
 
@@ -185,13 +205,14 @@ class ZaloLauncherGui:
             value="Profiles stores reusable Chrome profile definitions. Launch Chrome from the Zalo Accounts tab."
         )
 
+        self.account_name_var = tk.StringVar()
         self.account_profile_choice_var = tk.StringVar()
         self.account_proxy_var = tk.StringVar()
-        self.account_mode_var = tk.StringVar(value="send")
-        self.account_listener_token_var = tk.StringVar()
+        self.account_role_var = tk.StringVar(value="sender")
+        self.account_credentials_file_path_var = tk.StringVar()
         self.account_headless_var = tk.BooleanVar(value=False)
         self.account_status_var = tk.StringVar(
-            value="Select a saved Zalo account to launch Chrome with its linked profile and proxy."
+            value="Select a saved Zalo account to launch Chrome as sender or start ZCA as listener."
         )
 
         self.click_target_name_var = tk.StringVar()
@@ -204,22 +225,30 @@ class ZaloLauncherGui:
         )
 
         self.account_profile_combobox: ttk.Combobox | None = None
+        self.account_role_combobox: ttk.Combobox | None = None
+        self.account_sender_fields_frame: tk.Frame | None = None
+        self.account_listener_fields_frame: tk.Frame | None = None
+        self.account_headless_checkbox: tk.Checkbutton | None = None
+        self.account_sender_hint_label: tk.Label | None = None
+        self.account_listener_hint_label: tk.Label | None = None
         self.click_target_selector_kind_combobox: ttk.Combobox | None = None
         self.click_target_is_image_checkbox: tk.Checkbutton | None = None
         self.click_target_upload_file_label: tk.Label | None = None
         self.click_target_upload_file_entry: tk.Entry | None = None
         self.click_target_upload_file_button: tk.Button | None = None
         self.click_target_hint_label: tk.Label | None = None
+        self.account_live_log_widget: tk.Text | None = None
 
         self._setup_window()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._create_widgets()
+        self.account_role_var.trace_add("write", self._on_account_role_changed)
         self.click_target_selector_kind_var.trace_add("write", self._on_click_target_selector_kind_changed)
         self.click_target_is_image_var.trace_add("write", self._on_click_target_selector_kind_changed)
         self._refresh_state()
         self._refresh_workspace_state()
         self._refresh_click_target_state()
-        self._start_message_webhook_server_if_configured()
+        self._sync_account_role_visibility()
 
     def _setup_window(self) -> None:
         self.ui.configure_window(
@@ -232,39 +261,9 @@ class ZaloLauncherGui:
         )
 
     def _on_close(self) -> None:
-        if self.message_webhook_server is not None:
-            self.message_webhook_server.stop()
+        if self.zca_listener_use_case is not None:
+            self.zca_listener_use_case.stop()
         self.root.destroy()
-
-    def _start_message_webhook_server_if_configured(self) -> None:
-        if self._mariadb_connection_factory is None:
-            return
-        try:
-            webhook_port = int((os.environ.get("ZALO_WEBHOOK_PORT") or "8765").strip())
-        except ValueError:
-            webhook_port = 8765
-
-        try:
-            self.message_webhook_server = LocalZaloMessageWebhookServer(
-                IngestZaloMessageWebhookUseCase(
-                    workspace_store=self.workspace_store,
-                    message_store=MariaDbMessageStore(self._mariadb_connection_factory),
-                ),
-                port=webhook_port,
-            )
-            self.message_webhook_server.start()
-        except Exception as exc:  # noqa: BLE001
-            self._set_account_status(
-                f"Webhook listener could not start: {exc}",
-                self.config.error_color,
-            )
-            self.message_webhook_server = None
-            return
-
-        self._set_account_status(
-            f"Webhook listener is running at {self.message_webhook_server.url}. Accounts in listen mode can forward extension events here.",
-            self.config.success_color,
-        )
 
     def _create_widgets(self) -> None:
         self.ui.create_header(
@@ -272,7 +271,7 @@ class ZaloLauncherGui:
             title=self.config.title,
             subtitle=(
                 "Profiles stores reusable Chrome profile definitions. "
-                "Zalo Accounts combines one linked profile with one proxy and launches Chrome from that tab. "
+                "Zalo Accounts now supports sender accounts for Chrome launch and listener accounts for ZCA credentials-based listening. "
                 "Class Manage stores selectors for manual Test Element actions after launch."
             ),
             wraplength=1040,
@@ -441,7 +440,7 @@ class ZaloLauncherGui:
         self.ui.create_section_label(library_frame, "Saved Zalo Accounts").grid(row=0, column=0, sticky="w")
         self.ui.create_muted_label(
             library_frame,
-            "Each saved item links one Chrome profile to one proxy value and is the actual launch target.",
+            "Each saved item is either one sender account for Chrome/Playwright or one listener account for ZCA.",
             wraplength=280,
         ).grid(row=1, column=0, sticky="w", pady=(4, 12))
 
@@ -491,36 +490,39 @@ class ZaloLauncherGui:
             row=0, column=0, columnspan=3, sticky="w"
         )
 
-        self._build_combobox_row(
+        self._build_entry_row(
             detail_frame,
             1,
+            "Account name",
+            self.account_name_var,
+        )
+        self._build_combobox_row(
+            detail_frame,
+            2,
+            "Account role",
+            self.account_role_var,
+            values=("sender", "listener"),
+            target_name="account_role",
+        )
+
+        self.account_sender_fields_frame = tk.Frame(detail_frame, bg=self.config.panel_color)
+        self.account_sender_fields_frame.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self.account_sender_fields_frame.grid_columnconfigure(1, weight=1)
+        self._build_combobox_row(
+            self.account_sender_fields_frame,
+            0,
             "Linked profile",
             self.account_profile_choice_var,
             target_name="account_profile",
         )
         self._build_entry_row(
-            detail_frame,
-            2,
+            self.account_sender_fields_frame,
+            1,
             "Proxy",
             self.account_proxy_var,
         )
-        self._build_combobox_row(
-            detail_frame,
-            3,
-            "Account mode",
-            self.account_mode_var,
-            values=("send", "listen"),
-            target_name="account_mode",
-        )
-        self._build_entry_row(
-            detail_frame,
-            4,
-            "Listener token",
-            self.account_listener_token_var,
-            readonly=True,
-        )
-        tk.Checkbutton(
-            detail_frame,
+        self.account_headless_checkbox = tk.Checkbutton(
+            self.account_sender_fields_frame,
             text="Launch headless",
             variable=self.account_headless_var,
             onvalue=True,
@@ -531,20 +533,35 @@ class ZaloLauncherGui:
             activeforeground=self.config.text_color,
             selectcolor=self.config.input_bg,
             font=("Segoe UI", 10),
-        ).grid(row=5, column=1, sticky="w", padx=(14, 12), pady=(0, 8))
-        self.ui.create_muted_label(
-            detail_frame,
+        )
+        self.account_headless_checkbox.grid(row=2, column=1, sticky="w", padx=(14, 12), pady=(0, 8))
+        self.account_sender_hint_label = self.ui.create_muted_label(
+            self.account_sender_fields_frame,
             "Supported formats: host:port, user:pass@host:port, or host:port:user:pass. Leave blank to use direct access.",
             wraplength=620,
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 4))
-        self.ui.create_muted_label(
-            detail_frame,
-            "Mode 'listen' reserves the account for extension/webhook ingest. Mode 'send' reserves it for browser/manual actions.",
+        )
+        self.account_sender_hint_label.grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 4))
+
+        self.account_listener_fields_frame = tk.Frame(detail_frame, bg=self.config.panel_color)
+        self.account_listener_fields_frame.grid(row=4, column=0, columnspan=3, sticky="ew")
+        self.account_listener_fields_frame.grid_columnconfigure(1, weight=1)
+        self._build_path_row(
+            self.account_listener_fields_frame,
+            0,
+            "Credentials file",
+            self.account_credentials_file_path_var,
+            "Browse",
+            self._browse_account_credentials_file,
+        )
+        self.account_listener_hint_label = self.ui.create_muted_label(
+            self.account_listener_fields_frame,
+            "Credentials file must contain cookie, userAgent, and imei for ZCA login.",
             wraplength=620,
-        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        )
+        self.account_listener_hint_label.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 10))
 
         account_action_frame = tk.Frame(detail_frame, bg=self.config.panel_color)
-        account_action_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        account_action_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         account_action_frame.grid_columnconfigure(1, weight=1)
 
         self.save_account_button = self.ui.create_button(
@@ -563,6 +580,22 @@ class ZaloLauncherGui:
         )
         self.test_proxy_button.grid(row=0, column=2, sticky="e", padx=(0, 8))
 
+        self.start_listen_button = self.ui.create_button(
+            account_action_frame,
+            text="Start Listen",
+            command=self._start_live_event_listener,
+            variant="secondary",
+        )
+        self.start_listen_button.grid(row=0, column=3, sticky="e", padx=(0, 8))
+
+        self.stop_listen_button = self.ui.create_button(
+            account_action_frame,
+            text="Stop Listen",
+            command=self._stop_live_event_listener,
+            variant="secondary",
+        )
+        self.stop_listen_button.grid(row=0, column=4, sticky="e", padx=(0, 8))
+
         self.launch_account_button = self.ui.create_button(
             account_action_frame,
             text="Launch Selected",
@@ -570,19 +603,46 @@ class ZaloLauncherGui:
             padx=18,
             variant="primary",
         )
-        self.launch_account_button.grid(row=0, column=3, sticky="e")
+        self.launch_account_button.grid(row=0, column=5, sticky="e")
 
         self.account_status_label = self.ui.create_status_label(
             detail_frame,
             textvariable=self.account_status_var,
             wraplength=620,
         )
-        self.account_status_label.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        self.account_status_label.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(18, 0))
 
         self.ui.create_code_label(
             detail_frame,
             f"Account workspace: {self.workspace_store.path}",
-        ).grid(row=10, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(14, 0))
+
+        self.ui.create_section_label(detail_frame, "ZCA Listener Log").grid(
+            row=8, column=0, columnspan=3, sticky="w", pady=(18, 0)
+        )
+        self.ui.create_muted_label(
+            detail_frame,
+            "Listener lifecycle and message persistence results appear here. Run the console batch file if you also want the same lines in terminal.",
+            wraplength=620,
+        ).grid(row=9, column=0, columnspan=3, sticky="w", pady=(4, 10))
+
+        log_frame = tk.Frame(
+            detail_frame,
+            bg=self.config.console_bg,
+            highlightthickness=1,
+            highlightbackground=self.config.border_color,
+            height=180,
+        )
+        log_frame.grid(row=10, column=0, columnspan=3, sticky="nsew")
+        log_frame.grid_columnconfigure(0, weight=1)
+        log_frame.grid_rowconfigure(0, weight=1)
+        log_frame.grid_propagate(False)
+
+        self.account_live_log_widget = self.ui.create_scrolled_log(log_frame, height=10)
+        self.account_live_log_widget.grid(row=0, column=0, sticky="nsew")
+        detail_frame.grid_rowconfigure(10, weight=1, minsize=180)
+
+        self._render_account_live_log()
 
     def _create_click_targets_tab(self, parent: tk.Frame) -> None:
         parent.grid_columnconfigure(1, weight=1)
@@ -806,8 +866,8 @@ class ZaloLauncherGui:
 
         if target_name == "account_profile":
             self.account_profile_combobox = combo
-        elif target_name == "account_mode":
-            pass
+        elif target_name == "account_role":
+            self.account_role_combobox = combo
         elif target_name == "click_target_selector_kind":
             self.click_target_selector_kind_combobox = combo
 
@@ -986,18 +1046,23 @@ class ZaloLauncherGui:
 
     def _load_account_into_form(self, account: SavedZaloAccount) -> None:
         self._current_edit_account_id = account.id
+        self.account_name_var.set(account.name)
         self._set_profile_choice_var(self.account_profile_choice_var, account.profile_id)
         self.account_proxy_var.set(account.proxy)
-        self.account_mode_var.set(account.mode)
-        self.account_listener_token_var.set(account.listener_token)
+        self.account_role_var.set(account.role)
+        self.account_credentials_file_path_var.set(account.credentials_file_path)
+        self._sync_account_role_visibility()
 
     def _load_new_account_defaults(self) -> None:
         self._current_edit_account_id = None
+        self.account_name_var.set("")
         self.account_profile_choice_var.set("")
         self.account_proxy_var.set("")
-        self.account_mode_var.set("send")
-        self.account_listener_token_var.set("")
+        self.account_role_var.set("sender")
+        self.account_credentials_file_path_var.set("")
+        self.account_headless_var.set(False)
         self.account_listbox.selection_clear(0, tk.END)
+        self._sync_account_role_visibility()
 
     def _load_click_target_into_form(self, click_target: SavedZaloClickTarget) -> None:
         self._current_edit_click_target_id = click_target.id
@@ -1025,11 +1090,15 @@ class ZaloLauncherGui:
         elif account.name:
             base_label = account.name
         else:
-            base_label = "Missing profile"
+            base_label = "Unnamed account"
 
-        if account.proxy:
-            return f"{base_label} | {account.mode} | {account.proxy}"
-        return f"{base_label} | {account.mode}"
+        if account.role == "sender":
+            if account.proxy:
+                return f"{base_label} | sender | {account.proxy}"
+            return f"{base_label} | sender"
+
+        credentials_label = Path(account.credentials_file_path).name if account.credentials_file_path else "no credentials"
+        return f"{base_label} | listener | {credentials_label}"
 
     def _format_click_target_label(self, click_target: SavedZaloClickTarget) -> str:
         label = f"{click_target.name} | {click_target.selector_kind}: {click_target.selector_value}"
@@ -1048,7 +1117,7 @@ class ZaloLauncherGui:
     def _start_new_account(self) -> None:
         self._load_new_account_defaults()
         self._set_account_status(
-            "Creating a new Zalo account entry. Select one saved profile, choose send/listen mode, enter an optional proxy, then save before launching.",
+            "Creating a new Zalo account entry. Use role 'sender' for Chrome launch or role 'listener' for ZCA credentials-based listening.",
             self.config.text_color,
         )
         self._update_account_action_states()
@@ -1133,6 +1202,10 @@ class ZaloLauncherGui:
         if self._proxy_test_in_progress or self._launch_in_progress:
             return
 
+        if self.account_role_var.get().strip().casefold() != "sender":
+            messagebox.showwarning("Test proxy", "Proxy testing is available only for sender accounts.")
+            return
+
         raw_proxy = self.account_proxy_var.get().strip()
         if not raw_proxy:
             messagebox.showwarning("Test proxy", "Enter a proxy value first.")
@@ -1156,6 +1229,138 @@ class ZaloLauncherGui:
             return
 
         self.root.after(0, lambda: self._handle_proxy_test_success(result))
+
+    def _start_live_event_listener(self) -> None:
+        if self._launch_in_progress or self._proxy_test_in_progress:
+            return
+
+        if self.zca_listener_use_case is None:
+            messagebox.showwarning(
+                "Start listener",
+                "MariaDB settings are required before the tool can persist ZCA listener messages.",
+            )
+            return
+
+        if self.zca_listener_use_case.is_running():
+            messagebox.showinfo("Start listener", "The ZCA listener is already running.")
+            return
+
+        selected_account_id = self._selected_account_id() or self._current_edit_account_id
+        if selected_account_id is None or selected_account_id not in self._accounts_by_id:
+            messagebox.showwarning("Start listener", "Select one saved listener account first.")
+            return
+
+        account = self._accounts_by_id[selected_account_id]
+        if account.role != "listener":
+            messagebox.showwarning(
+                "Start listener",
+                "Start Listen is available only for listener accounts.",
+            )
+            return
+
+        try:
+            self.zca_listener_use_case.start(
+                StartZcaListenerRequest(
+                    account_id=account.id,
+                    account_label=self._format_account_label(account),
+                    credentials_file_path=account.credentials_file_path,
+                ),
+                self._handle_live_event_log_entry,
+            )
+        except (LauncherValidationError, BrowserAutomationError) as exc:
+            self._handle_account_error(str(exc))
+            return
+
+        self._set_account_status(
+            f"Starting ZCA listener for '{self._format_account_label(account)}'...",
+            self.config.accent_color,
+        )
+        self._append_account_live_log_line(
+            f"Starting ZCA listener for '{self._format_account_label(account)}'..."
+        )
+        self._update_account_action_states()
+
+    def _stop_live_event_listener(self) -> None:
+        if self.zca_listener_use_case is None:
+            messagebox.showinfo("Stop listener", "The listener service is not configured.")
+            return
+
+        result = self.zca_listener_use_case.stop()
+        if not result.was_running:
+            messagebox.showinfo("Stop listener", "The ZCA listener is not running.")
+            return
+
+        self._set_account_status(
+            "Stopping ZCA listener...",
+            self.config.text_color,
+        )
+        self._append_account_live_log_line("Stopping ZCA listener...")
+        self._update_account_action_states()
+
+    def _handle_live_event_log_entry(self, event: ZaloLiveEventLogEntry) -> None:
+        self.root.after(0, lambda event=event: self._append_live_event_log_entry(event))
+
+    def _append_live_event_log_entry(self, event: ZaloLiveEventLogEntry) -> None:
+        self._append_account_live_log_line(format_zalo_live_event_log_entry(event))
+
+        if event.event_type.startswith("listener"):
+            status_color = self.config.success_color
+            summary_lower = f"{event.event_type} {event.summary}".casefold()
+            if "error" in summary_lower or "failed" in summary_lower or "unexpectedly" in summary_lower:
+                status_color = self.config.error_color
+            elif "stopped" in summary_lower:
+                status_color = self.config.text_color
+            self._set_account_status(
+                format_zalo_live_event_status_message(event),
+                status_color,
+            )
+            self._last_account_status_event = event
+            self._update_account_action_states()
+            return
+
+        if event.event_type == "new_message":
+            if self._should_skip_dom_status_override(event):
+                return
+            self._set_account_status(
+                format_zalo_live_event_status_message(event),
+                self.config.accent_color,
+            )
+            self._last_account_status_event = event
+            return
+
+    def _should_skip_dom_status_override(self, event: ZaloLiveEventLogEntry) -> bool:
+        if event.scope != "dom":
+            return False
+
+        previous_event = self._last_account_status_event
+        if previous_event is None:
+            return False
+
+        return (
+            previous_event.event_type == "new_message"
+            and previous_event.scope in {"group", "user"}
+            and previous_event.account_label == event.account_label
+        )
+
+    def _append_account_live_log_line(self, line: str) -> None:
+        self._account_live_log_lines.append(line)
+        self._account_live_log_lines = self._account_live_log_lines[-200:]
+        LOGGER.info("%s", line)
+        self._render_account_live_log()
+
+    def _render_account_live_log(self) -> None:
+        if self.account_live_log_widget is None:
+            return
+
+        content = "\n".join(self._account_live_log_lines)
+        if not content:
+            content = "ZCA listener events will appear here after you click Start Listen."
+
+        self.account_live_log_widget.configure(state="normal")
+        self.account_live_log_widget.delete("1.0", tk.END)
+        self.account_live_log_widget.insert("1.0", content)
+        self.account_live_log_widget.configure(state="disabled")
+        self.account_live_log_widget.see(tk.END)
 
     def _selected_profile_ids(self) -> list[str]:
         return [self._profile_ids[index] for index in self.profile_listbox.curselection() if index < len(self._profile_ids)]
@@ -1258,6 +1463,14 @@ class ZaloLauncherGui:
         if directory:
             self.profile_path_var.set(directory)
 
+    def _browse_account_credentials_file(self) -> None:
+        filename = filedialog.askopenfilename(
+            title="Select ZCA credentials file",
+            filetypes=[("JSON files", "*.json"), ("All files", "*.*")],
+        )
+        if filename:
+            self.account_credentials_file_path_var.set(filename)
+
     def _browse_click_target_upload_file_path(self) -> None:
         filename = filedialog.askopenfilename(
             title="Select upload file",
@@ -1314,14 +1527,13 @@ class ZaloLauncherGui:
         )
 
     def _save_account(self) -> None:
-        profile_label = self.account_profile_choice_var.get().strip()
         request = ZaloAccountUpsertRequest(
             account_id=self._current_edit_account_id,
-            name=profile_label,
+            name=self.account_name_var.get(),
             profile_id=self._selected_profile_choice_id(self.account_profile_choice_var),
             proxy=self.account_proxy_var.get(),
-            mode=self.account_mode_var.get(),
-            listener_token=self.account_listener_token_var.get(),
+            role=self.account_role_var.get(),
+            credentials_file_path=self.account_credentials_file_path_var.get(),
         )
 
         try:
@@ -1336,7 +1548,7 @@ class ZaloLauncherGui:
             preferred_account_ids=[saved_account.id],
         )
         self._set_account_status(
-            f"Saved account '{self._format_account_label(saved_account)}'. Listener token is ready for extension/webhook use.",
+            f"Saved account '{self._format_account_label(saved_account)}'.",
             self.config.success_color,
         )
 
@@ -1379,6 +1591,25 @@ class ZaloLauncherGui:
 
     def _on_click_target_selector_kind_changed(self, *_args) -> None:
         self._sync_click_target_upload_path_visibility()
+
+    def _on_account_role_changed(self, *_args) -> None:
+        self._sync_account_role_visibility()
+        self._update_account_action_states()
+
+    def _sync_account_role_visibility(self) -> None:
+        is_sender = self.account_role_var.get().strip().casefold() != "listener"
+
+        if self.account_sender_fields_frame is not None:
+            if is_sender:
+                self.account_sender_fields_frame.grid()
+            else:
+                self.account_sender_fields_frame.grid_remove()
+
+        if self.account_listener_fields_frame is not None:
+            if is_sender:
+                self.account_listener_fields_frame.grid_remove()
+            else:
+                self.account_listener_fields_frame.grid()
 
     def _sync_click_target_upload_path_visibility(self) -> None:
         is_image_target = self.click_target_is_image_var.get()
@@ -1484,12 +1715,31 @@ class ZaloLauncherGui:
         if self._launch_in_progress or self._proxy_test_in_progress:
             return
 
+        if self.account_role_var.get().strip().casefold() != "sender":
+            messagebox.showwarning(
+                "Launch account",
+                "Only sender accounts can launch Chrome. Use Start Listen for listener accounts.",
+            )
+            return
+
         account_ids = self._selected_account_ids()
         if not account_ids and self._current_edit_account_id in self._accounts_by_id:
             account_ids = [self._current_edit_account_id]
 
         if not account_ids:
             messagebox.showwarning("Launch account", "Save or select a Zalo account before launching.")
+            return
+
+        selected_accounts = [
+            self._accounts_by_id[account_id]
+            for account_id in account_ids
+            if account_id in self._accounts_by_id
+        ]
+        if any(account.role != "sender" for account in selected_accounts):
+            messagebox.showwarning(
+                "Launch account",
+                "Only sender accounts can be launched in Chrome.",
+            )
             return
 
         self._launch_in_progress = True
@@ -1537,8 +1787,12 @@ class ZaloLauncherGui:
             if len(result.accounts) == 1 and not result.headless:
                 self._last_account_remote_debugging_port = result.accounts[0].launch_result.remote_debugging_port
                 self._last_account_target_url = result.accounts[0].launch_result.target_url
+                self._last_live_event_account_label = self._format_account_label(
+                    self._accounts_by_id[result.accounts[0].account_id]
+                )
             else:
                 self._last_account_remote_debugging_port = None
+                self._last_live_event_account_label = ""
             self._refresh_workspace_state(preferred_account_ids=selected_ids)
             self._update_account_action_states()
 
@@ -1564,6 +1818,11 @@ class ZaloLauncherGui:
             None if result.headless else result.launch_result.remote_debugging_port
         )
         self._last_account_target_url = result.launch_result.target_url
+        self._last_live_event_account_label = (
+            ""
+            if result.headless
+            else self._format_account_label(self._accounts_by_id[result.account_id])
+        )
         self._refresh_workspace_state(preferred_account_ids=[result.account_id])
         self._update_account_action_states()
 
@@ -1672,27 +1931,71 @@ class ZaloLauncherGui:
 
     def _update_account_action_states(self) -> None:
         has_saved_selection = self._current_edit_account_id in self._accounts_by_id
+        selected_account_id = self._selected_account_id() or self._current_edit_account_id
+        selected_account = (
+            self._accounts_by_id[selected_account_id]
+            if selected_account_id in self._accounts_by_id
+            else None
+        )
+        selected_role = (
+            self.account_role_var.get().strip().casefold()
+            if selected_account is None
+            else selected_account.role
+        )
+        is_sender_role = selected_role == "sender"
+        is_listener_role = selected_role == "listener"
+        is_live_listener_running = (
+            False if self.zca_listener_use_case is None else self.zca_listener_use_case.is_running()
+        )
         if self._launch_in_progress:
             self.launch_account_button.configure(state="disabled", text="Launching...")
             self.save_account_button.configure(state="disabled")
             self.new_account_button.configure(state="disabled")
             self.delete_account_button.configure(state="disabled")
             self.test_proxy_button.configure(state="disabled", text="Test Proxy")
+            self.start_listen_button.configure(state="disabled", text="Start Listen")
+            self.stop_listen_button.configure(state="disabled", text="Stop Listen")
             self.account_listbox.configure(state="disabled")
             return
 
-        self.launch_account_button.configure(
-            state="normal" if bool(self._selected_account_ids()) and not self._proxy_test_in_progress else "disabled",
-            text="Launch Selected",
-        )
         self.save_account_button.configure(state="normal")
         self.new_account_button.configure(state="normal")
         self.delete_account_button.configure(
             state="normal" if has_saved_selection else "disabled"
         )
         self.test_proxy_button.configure(
-            state="disabled" if self._proxy_test_in_progress else "normal",
+            state=(
+                "disabled"
+                if self._proxy_test_in_progress or not is_sender_role
+                else "normal"
+            ),
             text="Testing..." if self._proxy_test_in_progress else "Test Proxy",
+        )
+        self.start_listen_button.configure(
+            state=(
+                "normal"
+                if (
+                    is_listener_role
+                    and self.zca_listener_use_case is not None
+                    and not is_live_listener_running
+                    and selected_account is not None
+                    and bool(selected_account.credentials_file_path)
+                )
+                else "disabled"
+            ),
+            text="Start Listen",
+        )
+        self.stop_listen_button.configure(
+            state="normal" if is_live_listener_running and is_listener_role else "disabled",
+            text="Stop Listen",
+        )
+        self.launch_account_button.configure(
+            state=(
+                "normal"
+                if bool(self._selected_account_ids()) and not self._proxy_test_in_progress and is_sender_role
+                else "disabled"
+            ),
+            text="Launch Selected",
         )
         self.account_listbox.configure(state="normal")
 
@@ -1728,6 +2031,10 @@ class ZaloLauncherGui:
 
 
 def main() -> None:
+    logging.basicConfig(
+        level=getattr(logging, (os.environ.get("BROWSER_AUTOMATION_LOG_LEVEL") or "INFO").upper(), logging.INFO),
+        format="%(asctime)s %(levelname)s %(message)s",
+    )
     root = tk.Tk()
     ZaloLauncherGui(root)
     root.mainloop()

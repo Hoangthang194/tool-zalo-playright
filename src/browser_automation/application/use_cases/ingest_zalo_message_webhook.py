@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from browser_automation.application.ports.message_store import MessageStore
 from browser_automation.application.ports.zalo_workspace_store import ZaloWorkspaceStore
+from browser_automation.domain.exceptions import SettingsPersistenceError
 from browser_automation.domain.messages import SavedZaloMessage
 from browser_automation.domain.zalo_workspace import SavedZaloAccount
 
@@ -48,7 +49,7 @@ class IngestZaloMessageWebhookUseCase:
                 detail="msgId is required.",
             )
 
-        if request.content is None:
+        if request.content is None or not request.content.strip():
             return IngestZaloMessageWebhookResult(
                 status="invalid",
                 detail="content is required.",
@@ -67,15 +68,23 @@ class IngestZaloMessageWebhookUseCase:
                 detail="Account is not active in listen mode.",
             )
 
-        persistence_status = self._message_store.save_message(
-            SavedZaloMessage(
-                msg_id=msg_id,
-                from_group_id=self._normalize_optional_value(request.from_group_id),
-                to_group_id=self._normalize_optional_value(request.to_group_id),
-                from_account_id=account.id,
-                content=request.content,
+        try:
+            persistence_status = self._message_store.save_message(
+                SavedZaloMessage(
+                    msg_id=msg_id,
+                    from_group_id=self._normalize_optional_value(request.from_group_id),
+                    to_group_id=self._normalize_optional_value(request.to_group_id),
+                    from_account_id=account.id,
+                    content=request.content,
+                )
             )
-        )
+        except SettingsPersistenceError as exc:
+            return IngestZaloMessageWebhookResult(
+                status="failed",
+                from_account_id=account.id,
+                detail=str(exc),
+            )
+
         return IngestZaloMessageWebhookResult(
             status=persistence_status,
             from_account_id=account.id,

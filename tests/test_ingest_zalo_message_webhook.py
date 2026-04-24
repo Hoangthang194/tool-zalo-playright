@@ -2,6 +2,7 @@ from browser_automation.application.use_cases.ingest_zalo_message_webhook import
     IngestZaloMessageWebhookRequest,
     IngestZaloMessageWebhookUseCase,
 )
+from browser_automation.domain.exceptions import SettingsPersistenceError
 from browser_automation.domain.messages import SavedZaloMessage
 from browser_automation.domain.zalo_workspace import SavedZaloAccount, ZaloWorkspaceLibrary
 
@@ -26,6 +27,11 @@ class InMemoryMessageStore:
             return "already_processed"
         self.messages[message.msg_id] = message
         return "inserted"
+
+
+class FailingMessageStore:
+    def save_message(self, message: SavedZaloMessage) -> str:
+        raise SettingsPersistenceError("Resolved account could not be persisted to MariaDB.")
 
 
 def test_ingest_zalo_message_webhook_accepts_message_for_listen_account() -> None:
@@ -74,6 +80,38 @@ def test_ingest_zalo_message_webhook_rejects_invalid_token() -> None:
     )
 
     assert result.status == "invalid_token"
+
+
+def test_ingest_zalo_message_webhook_rejects_blank_content() -> None:
+    workspace_store = InMemoryZaloWorkspaceStore(
+        ZaloWorkspaceLibrary(
+            accounts=(
+                SavedZaloAccount(
+                    id="account-1",
+                    name="Profile 1",
+                    profile_id="profile-1",
+                    mode="listen",
+                    listener_token="token-1",
+                ),
+            )
+        )
+    )
+    message_store = InMemoryMessageStore()
+    use_case = IngestZaloMessageWebhookUseCase(workspace_store, message_store)
+
+    result = use_case.execute(
+        IngestZaloMessageWebhookRequest(
+            listener_token="token-1",
+            msg_id="msg-1",
+            from_group_id=None,
+            to_group_id=None,
+            content="   ",
+        )
+    )
+
+    assert result.status == "invalid"
+    assert result.detail == "content is required."
+    assert message_store.messages == {}
 
 
 def test_ingest_zalo_message_webhook_rejects_send_mode_account() -> None:
@@ -143,3 +181,34 @@ def test_ingest_zalo_message_webhook_returns_already_processed_for_duplicate_msg
 
     assert first_result.status == "inserted"
     assert second_result.status == "already_processed"
+
+
+def test_ingest_zalo_message_webhook_returns_failed_when_persistence_errors() -> None:
+    workspace_store = InMemoryZaloWorkspaceStore(
+        ZaloWorkspaceLibrary(
+            accounts=(
+                SavedZaloAccount(
+                    id="account-1",
+                    name="Profile 1",
+                    profile_id="profile-1",
+                    mode="listen",
+                    listener_token="token-1",
+                ),
+            )
+        )
+    )
+    use_case = IngestZaloMessageWebhookUseCase(workspace_store, FailingMessageStore())
+
+    result = use_case.execute(
+        IngestZaloMessageWebhookRequest(
+            listener_token="token-1",
+            msg_id="msg-1",
+            from_group_id=None,
+            to_group_id=None,
+            content="hello",
+        )
+    )
+
+    assert result.status == "failed"
+    assert result.from_account_id == "account-1"
+    assert result.detail == "Resolved account could not be persisted to MariaDB."

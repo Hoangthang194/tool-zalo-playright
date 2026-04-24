@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import secrets
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -11,7 +10,7 @@ from browser_automation.domain.exceptions import (
 )
 from browser_automation.domain.zalo_workspace import (
     SavedZaloAccount,
-    ZaloAccountMode,
+    ZaloAccountRole,
     ZaloWorkspaceLibrary,
 )
 
@@ -22,8 +21,8 @@ class ZaloAccountUpsertRequest:
     account_id: str | None = None
     profile_id: str | None = None
     proxy: str = ""
-    mode: str = ZaloAccountMode.SEND.value
-    listener_token: str | None = None
+    role: str = ZaloAccountRole.SENDER.value
+    credentials_file_path: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,16 +55,25 @@ class ZaloWorkspaceManagerUseCase:
         account_name = self._normalize_required_name(
             request.name,
             conflict_error_type=SavedZaloAccountConflictError,
-            empty_message="A linked profile is required.",
+            empty_message="Account name is required.",
         )
         profile_id = self._normalize_optional_value(request.profile_id)
         proxy = request.proxy.strip()
-        mode = self._normalize_mode(request.mode)
+        role = self._normalize_role(request.role)
+        credentials_file_path = self._normalize_optional_value(request.credentials_file_path) or ""
 
-        if profile_id is None:
-            raise SavedZaloAccountConflictError("A linked profile is required.")
-
-        self._ensure_unique_linked_profile(profile_id, request.account_id, library)
+        if role == ZaloAccountRole.SENDER.value:
+            if profile_id is None:
+                raise SavedZaloAccountConflictError("A linked profile is required for sender accounts.")
+            self._ensure_unique_linked_profile(profile_id, request.account_id, library)
+            credentials_file_path = ""
+        else:
+            if not credentials_file_path:
+                raise SavedZaloAccountConflictError(
+                    "A credentials file is required for listener accounts."
+                )
+            profile_id = None
+            proxy = ""
 
         existing_account = None
         if request.account_id is not None:
@@ -76,8 +84,10 @@ class ZaloWorkspaceManagerUseCase:
             name=account_name,
             profile_id=profile_id,
             proxy=proxy,
-            mode=mode,
-            listener_token=self._resolve_listener_token(request.listener_token, existing_account),
+            role=role,
+            credentials_file_path=credentials_file_path,
+            mode="send" if role == ZaloAccountRole.SENDER.value else "listen",
+            listener_token=existing_account.listener_token if existing_account is not None else "",
         )
         next_accounts = self._replace_or_append_account(account, library.accounts)
         updated_library = ZaloWorkspaceLibrary(
@@ -181,23 +191,11 @@ class ZaloWorkspaceManagerUseCase:
         normalized = value.strip()
         return normalized or None
 
-    def _normalize_mode(self, value: str) -> str:
+    def _normalize_role(self, value: str) -> str:
         normalized = value.strip().casefold()
-        allowed_modes = {mode.value for mode in ZaloAccountMode}
-        if normalized not in allowed_modes:
+        allowed_roles = {role.value for role in ZaloAccountRole}
+        if normalized not in allowed_roles:
             raise SavedZaloAccountConflictError(
-                "Account mode must be either 'send' or 'listen'."
+                "Account role must be either 'sender' or 'listener'."
             )
         return normalized
-
-    def _resolve_listener_token(
-        self,
-        requested_token: str | None,
-        existing_account: SavedZaloAccount | None,
-    ) -> str:
-        normalized_token = self._normalize_optional_value(requested_token)
-        if normalized_token is not None:
-            return normalized_token
-        if existing_account is not None and existing_account.listener_token:
-            return existing_account.listener_token
-        return secrets.token_urlsafe(24)

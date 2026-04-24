@@ -64,13 +64,56 @@ python -m browser_automation examples\sample_workflow.json
 browser-automation-zalo-gui
 ```
 
+Windows batch entrypoints:
+
+```powershell
+.\run-zalo-gui.bat
+.\run-zalo-gui-console.bat
+```
+
+Use `run-zalo-gui-console.bat` when you want listener logs in the terminal.
+
 The Zalo GUI now has two tabs:
 
 - `Profiles`: save reusable Chrome profile definitions
-- `Zalo Accounts`: store one proxy setting for each linked profile and launch `https://chat.zalo.me`
+- `Zalo Accounts`: manage fixed-role `sender` and `listener` accounts
 
 The `Profiles` tab lets you save multiple Chrome profile folders such as `...\User Data\Profile 1` and use them later inside the account workflow.
-The `Zalo Accounts` tab lets you pick a saved profile, assign an optional proxy such as `127.0.0.1:8080` or `user:pass@host:port`, and launch real Google Chrome into `https://chat.zalo.me`.
+The `Zalo Accounts` tab now supports:
+
+- `sender`: pick a saved profile, assign an optional proxy such as `127.0.0.1:8080` or `user:pass@host:port`, and launch real Google Chrome into `https://chat.zalo.me`
+- `listener`: point to one ZCA credentials JSON file containing `cookie`, `userAgent`, and `imei`, then start one managed ZCA subprocess that listens for incoming messages and persists them into MariaDB
+
+To see the same listener logs in the terminal without the GUI swallowing them through `pythonw`, run:
+
+```powershell
+python -m browser_automation.interfaces.gui.zalo_app
+```
+
+## ZCA Listener Setup
+
+Install the Node.js dependencies once:
+
+```powershell
+cd src\browser_automation\infrastructure\zca
+npm install
+```
+
+The listener feature requires MariaDB settings because `new_message` events are written into the `messages` table:
+
+```powershell
+$env:ZALO_DB_HOST="127.0.0.1"
+$env:ZALO_DB_PORT="3306"
+$env:ZALO_DB_USER="root"
+$env:ZALO_DB_PASSWORD="your-password"
+$env:ZALO_DB_NAME="zalo"
+```
+
+Optional terminal log level:
+
+```powershell
+$env:BROWSER_AUTOMATION_LOG_LEVEL="DEBUG"
+```
 
 Launching one saved account opens Chrome with deterministic window bounds based on the first `4x2` grid cell instead of Chrome's arbitrary restored size.
 If another launched Chrome window is already visible, the next account launch uses the next grid cell beside it instead of overlapping the first one.
@@ -169,5 +212,11 @@ This repository now includes Spec Kit-style artifact sets for the implemented wo
 - Feature spec: `specs/007-zalo-manual-click-target-testing/spec.md`
 - Feature spec: `specs/008-zalo-attribute-selector-targets/spec.md`
 - Feature spec: `specs/009-zalo-upload-file-click-targets/spec.md`
+- Feature spec: `specs/010-zalo-database-script-foundation/spec.md`
+- Feature spec: `specs/011-zalo-profile-db-crud/spec.md`
+- Feature spec: `specs/012-zalo-account-bulk-launch-headless/spec.md`
+- Feature spec: `specs/013-zalo-message-webhook-ingest/spec.md`
+- Feature spec: `specs/014-zalo-live-event-log-monitor/spec.md`
+- Feature spec: `specs/015-zca-subprocess-listener/spec.md`
 
 These files are intended to be the source of truth for future changes to the workflow-driven browser automation tool.

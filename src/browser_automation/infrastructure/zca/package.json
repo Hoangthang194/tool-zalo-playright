@@ -1,0 +1,8 @@
+{
+  "name": "browser-automation-zca-listener",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "zca-js": "^2.1.2"
+  }
+}

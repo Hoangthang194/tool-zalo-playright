@@ -19,8 +19,13 @@ def test_json_zalo_workspace_store_round_trips_account_proxy_data(tmp_path) -> N
                 name="Profile One",
                 profile_id="profile-1",
                 proxy="user:pass@127.0.0.1:9000",
-                mode="listen",
-                listener_token="token-1",
+                role="sender",
+            ),
+            SavedZaloAccount(
+                id="account-2",
+                name="Listener One",
+                role="listener",
+                credentials_file_path=r"C:\zca\listener.json",
             ),
         ),
         click_targets=(
@@ -32,7 +37,7 @@ def test_json_zalo_workspace_store_round_trips_account_proxy_data(tmp_path) -> N
                 upload_file_path=str(upload_file),
             ),
         ),
-        selected_account_id="account-1",
+        selected_account_id="account-2",
         selected_click_target_id="target-1",
     )
 
@@ -61,8 +66,8 @@ def test_json_zalo_workspace_store_skips_invalid_entries(tmp_path) -> None:
 
     assert len(loaded.accounts) == 1
     assert loaded.accounts[0].id == "account-1"
-    assert loaded.accounts[0].mode == "send"
-    assert loaded.accounts[0].listener_token == ""
+    assert loaded.accounts[0].role == "sender"
+    assert loaded.accounts[0].credentials_file_path == ""
 
 
 def test_json_zalo_workspace_store_loads_accounts_from_legacy_payload_shape(tmp_path) -> None:
@@ -89,6 +94,33 @@ def test_json_zalo_workspace_store_loads_accounts_from_legacy_payload_shape(tmp_
     assert loaded.accounts[0].name == "Legacy Account"
     assert loaded.accounts[0].profile_id == "profile-legacy"
     assert loaded.accounts[0].proxy == ""
+    assert loaded.accounts[0].role == "sender"
+
+
+def test_json_zalo_workspace_store_migrates_legacy_mode_listen_to_listener_role(tmp_path) -> None:
+    workspace_path = tmp_path / "zalo-workspace.json"
+    workspace_path.write_text(
+        """
+        {
+          "selected_account_id": "account-1",
+          "accounts": [
+            {
+              "id": "account-1",
+              "name": "Legacy Listener",
+              "mode": "listen",
+              "listener_token": "legacy-token"
+            }
+          ]
+        }
+        """,
+        encoding="utf-8",
+    )
+
+    loaded = JsonZaloWorkspaceStore(path=workspace_path).load()
+
+    assert len(loaded.accounts) == 1
+    assert loaded.accounts[0].role == "listener"
+    assert loaded.accounts[0].credentials_file_path == ""
 
 
 def test_json_zalo_workspace_store_loads_click_targets_when_present(tmp_path) -> None:

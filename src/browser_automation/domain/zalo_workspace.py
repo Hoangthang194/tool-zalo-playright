@@ -9,14 +9,30 @@ class ZaloAccountMode(StrEnum):
     LISTEN = "listen"
 
 
+class ZaloAccountRole(StrEnum):
+    SENDER = "sender"
+    LISTENER = "listener"
+
+
 @dataclass(frozen=True, slots=True)
 class SavedZaloAccount:
     id: str
     name: str
     profile_id: str | None = None
     proxy: str = ""
-    mode: str = ZaloAccountMode.SEND.value
+    role: str = ZaloAccountRole.SENDER.value
+    credentials_file_path: str = ""
+    mode: str = ""
     listener_token: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.mode:
+            resolved_mode = (
+                ZaloAccountMode.LISTEN.value
+                if self.role == ZaloAccountRole.LISTENER.value
+                else ZaloAccountMode.SEND.value
+            )
+            object.__setattr__(self, "mode", resolved_mode)
 
 
 @dataclass(frozen=True, slots=True)

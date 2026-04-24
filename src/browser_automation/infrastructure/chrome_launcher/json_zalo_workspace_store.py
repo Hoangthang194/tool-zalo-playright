@@ -88,6 +88,8 @@ class JsonZaloWorkspaceStore:
                     "name": account.name,
                     "profile_id": account.profile_id,
                     "proxy": account.proxy,
+                    "role": account.role,
+                    "credentials_file_path": account.credentials_file_path,
                     "mode": account.mode,
                     "listener_token": account.listener_token,
                 }
@@ -122,7 +124,11 @@ class JsonZaloWorkspaceStore:
         name = self._optional_str(payload.get("name"))
         profile_id = self._optional_str(payload.get("profile_id"))
         proxy = self._optional_str(payload.get("proxy")) or ""
-        mode = self._optional_str(payload.get("mode")) or "send"
+        role = self._optional_str(payload.get("role"))
+        legacy_mode = self._optional_str(payload.get("mode")) or "send"
+        if role is None:
+            role = "listener" if legacy_mode == "listen" else "sender"
+        credentials_file_path = self._optional_str(payload.get("credentials_file_path")) or ""
         listener_token = self._optional_str(payload.get("listener_token")) or ""
         if not account_id:
             return None
@@ -133,7 +139,9 @@ class JsonZaloWorkspaceStore:
             name=name,
             profile_id=profile_id,
             proxy=proxy,
-            mode=mode,
+            role=role,
+            credentials_file_path=credentials_file_path,
+            mode=legacy_mode,
             listener_token=listener_token,
         )
 

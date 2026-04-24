@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed.
+Implemented in code. Manual MariaDB verification is still pending.
 
 ## Summary
 

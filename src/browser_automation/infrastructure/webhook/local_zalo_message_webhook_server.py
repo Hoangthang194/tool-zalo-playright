@@ -10,6 +10,7 @@ from browser_automation.application.use_cases.ingest_zalo_message_webhook import
     IngestZaloMessageWebhookRequest,
     IngestZaloMessageWebhookUseCase,
 )
+from browser_automation.domain.exceptions import SettingsPersistenceError
 
 
 class LocalZaloMessageWebhookServer:
@@ -73,18 +74,32 @@ class LocalZaloMessageWebhookServer:
                     )
                     return
 
-                result = use_case.execute(
-                    IngestZaloMessageWebhookRequest(
-                        listener_token=str(payload.get("listenerToken") or ""),
-                        msg_id=str(payload.get("msgId") or ""),
-                        from_group_id=_optional_str(payload.get("fromGroupId")),
-                        to_group_id=_optional_str(payload.get("toGroupId")),
-                        content=str(payload.get("content") or ""),
+                try:
+                    result = use_case.execute(
+                        IngestZaloMessageWebhookRequest(
+                            listener_token=str(payload.get("listenerToken") or ""),
+                            msg_id=str(payload.get("msgId") or ""),
+                            from_group_id=_optional_str(payload.get("fromGroupId")),
+                            to_group_id=_optional_str(payload.get("toGroupId")),
+                            content=str(payload.get("content") or ""),
+                        )
                     )
-                )
+                except SettingsPersistenceError as exc:
+                    self._write_json(
+                        HTTPStatus.INTERNAL_SERVER_ERROR,
+                        {
+                            "status": "failed",
+                            "detail": str(exc),
+                            "fromAccountId": None,
+                        },
+                    )
+                    return
+
                 status_code = HTTPStatus.OK
                 if result.status in {"invalid", "invalid_token", "account_mode_conflict"}:
                     status_code = HTTPStatus.BAD_REQUEST
+                elif result.status == "failed":
+                    status_code = HTTPStatus.INTERNAL_SERVER_ERROR
                 self._write_json(
                     status_code,
                     {

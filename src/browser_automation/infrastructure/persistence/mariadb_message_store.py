@@ -32,6 +32,10 @@ class MariaDbMessageStore:
                 error_code = exc.args[0]
                 if error_code == 1062:
                     return "already_processed"
+                if error_code == 1452:
+                    raise SettingsPersistenceError(
+                        "Resolved account could not be persisted to MariaDB."
+                    ) from exc
             raise SettingsPersistenceError("Could not persist incoming Zalo message to MariaDB.") from exc
         return "inserted"
 

@@ -1,3 +1,5 @@
+import pytest
+
 from browser_automation.application.use_cases.manage_zalo_workspace import (
     ZaloAccountUpsertRequest,
     ZaloWorkspaceManagerUseCase,
@@ -47,8 +49,8 @@ def test_workspace_use_case_saves_and_updates_accounts() -> None:
     assert updated_state.accounts[0].name == "Profile One"
     assert updated_state.accounts[0].profile_id == "profile-1"
     assert updated_state.accounts[0].proxy == "user:pass@10.0.0.2:9000"
-    assert updated_state.accounts[0].mode == "send"
-    assert updated_state.accounts[0].listener_token
+    assert updated_state.accounts[0].role == "sender"
+    assert updated_state.accounts[0].credentials_file_path == ""
     assert updated_state.selected_account_id == created_account.id
 
 
@@ -95,6 +97,19 @@ def test_workspace_use_case_requires_linked_profile() -> None:
         raise AssertionError("Expected missing profile conflict")
 
 
+def test_workspace_use_case_requires_credentials_file_for_listener_accounts() -> None:
+    store = InMemoryZaloWorkspaceStore()
+    use_case = ZaloWorkspaceManagerUseCase(store)
+
+    with pytest.raises(SavedZaloAccountConflictError, match="credentials"):
+        use_case.save_account(
+            ZaloAccountUpsertRequest(
+                name="Listener One",
+                role="listener",
+            )
+        )
+
+
 def test_workspace_use_case_deletes_and_selects_accounts() -> None:
     store = InMemoryZaloWorkspaceStore()
     use_case = ZaloWorkspaceManagerUseCase(store)
@@ -121,36 +136,26 @@ def test_workspace_use_case_deletes_and_selects_accounts() -> None:
         raise AssertionError("Expected account not found")
 
 
-def test_workspace_use_case_persists_listener_mode_and_token_on_update() -> None:
+def test_workspace_use_case_saves_listener_accounts_without_profile_link() -> None:
     store = InMemoryZaloWorkspaceStore()
     use_case = ZaloWorkspaceManagerUseCase(store)
 
-    created_state = use_case.save_account(
+    state = use_case.save_account(
         ZaloAccountUpsertRequest(
-            name="Profile Listen",
-            profile_id="profile-listen",
-            proxy="",
-            mode="listen",
-        )
-    )
-    created_account = created_state.accounts[0]
-
-    updated_state = use_case.save_account(
-        ZaloAccountUpsertRequest(
-            account_id=created_account.id,
-            name="Profile Listen",
-            profile_id="profile-listen",
-            proxy="127.0.0.1:8080",
-            mode="listen",
+            name="Listener One",
+            role="listener",
+            credentials_file_path=r"C:\zca\listener-1.json",
         )
     )
 
-    updated_account = updated_state.accounts[0]
-    assert updated_account.mode == "listen"
-    assert updated_account.listener_token == created_account.listener_token
+    account = state.accounts[0]
+    assert account.role == "listener"
+    assert account.profile_id is None
+    assert account.proxy == ""
+    assert account.credentials_file_path == r"C:\zca\listener-1.json"
 
 
-def test_workspace_use_case_rejects_invalid_account_mode() -> None:
+def test_workspace_use_case_rejects_invalid_account_role() -> None:
     store = InMemoryZaloWorkspaceStore()
     use_case = ZaloWorkspaceManagerUseCase(store)
 
@@ -159,10 +164,35 @@ def test_workspace_use_case_rejects_invalid_account_mode() -> None:
             ZaloAccountUpsertRequest(
                 name="Profile One",
                 profile_id="profile-1",
-                mode="invalid",
+                role="invalid",
             )
         )
     except SavedZaloAccountConflictError as exc:
-        assert "mode" in str(exc).lower()
+        assert "role" in str(exc).lower()
     else:
-        raise AssertionError("Expected invalid mode conflict")
+        raise AssertionError("Expected invalid role conflict")
+
+
+def test_workspace_use_case_allows_updating_listener_credentials_file() -> None:
+    store = InMemoryZaloWorkspaceStore()
+    use_case = ZaloWorkspaceManagerUseCase(store)
+
+    created_state = use_case.save_account(
+        ZaloAccountUpsertRequest(
+            name="Listener One",
+            role="listener",
+            credentials_file_path=r"C:\zca\listener-a.json",
+        )
+    )
+    created_account = created_state.accounts[0]
+
+    updated_state = use_case.save_account(
+        ZaloAccountUpsertRequest(
+            account_id=created_account.id,
+            name="Listener One",
+            role="listener",
+            credentials_file_path=r"C:\zca\listener-b.json",
+        )
+    )
+
+    assert updated_state.accounts[0].credentials_file_path == r"C:\zca\listener-b.json"

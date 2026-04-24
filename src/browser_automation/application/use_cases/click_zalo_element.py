@@ -46,9 +46,7 @@ class ClickZaloElementUseCase:
 
     def execute(self, request: ClickZaloElementRequest) -> ClickZaloElementResult:
         selector_kind = normalize_selector_kind(request.selector_kind)
-        upload_file_path = ""
-        if selector_kind == "image":
-            upload_file_path = normalize_optional_upload_file_path(request.upload_file_path)
+        upload_file_path = normalize_optional_upload_file_path(request.upload_file_path)
 
         click_target = SavedZaloClickTarget(
             id="adhoc-click-target",
