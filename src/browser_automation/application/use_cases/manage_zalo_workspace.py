@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -10,6 +11,7 @@ from browser_automation.domain.exceptions import (
 )
 from browser_automation.domain.zalo_workspace import (
     SavedZaloAccount,
+    ZaloAccountMode,
     ZaloWorkspaceLibrary,
 )
 
@@ -20,6 +22,8 @@ class ZaloAccountUpsertRequest:
     account_id: str | None = None
     profile_id: str | None = None
     proxy: str = ""
+    mode: str = ZaloAccountMode.SEND.value
+    listener_token: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,17 +60,24 @@ class ZaloWorkspaceManagerUseCase:
         )
         profile_id = self._normalize_optional_value(request.profile_id)
         proxy = request.proxy.strip()
+        mode = self._normalize_mode(request.mode)
 
         if profile_id is None:
             raise SavedZaloAccountConflictError("A linked profile is required.")
 
         self._ensure_unique_linked_profile(profile_id, request.account_id, library)
 
+        existing_account = None
+        if request.account_id is not None:
+            existing_account = self._find_account(request.account_id, library)
+
         account = SavedZaloAccount(
             id=request.account_id or uuid4().hex,
             name=account_name,
             profile_id=profile_id,
             proxy=proxy,
+            mode=mode,
+            listener_token=self._resolve_listener_token(request.listener_token, existing_account),
         )
         next_accounts = self._replace_or_append_account(account, library.accounts)
         updated_library = ZaloWorkspaceLibrary(
@@ -169,3 +180,24 @@ class ZaloWorkspaceManagerUseCase:
             return None
         normalized = value.strip()
         return normalized or None
+
+    def _normalize_mode(self, value: str) -> str:
+        normalized = value.strip().casefold()
+        allowed_modes = {mode.value for mode in ZaloAccountMode}
+        if normalized not in allowed_modes:
+            raise SavedZaloAccountConflictError(
+                "Account mode must be either 'send' or 'listen'."
+            )
+        return normalized
+
+    def _resolve_listener_token(
+        self,
+        requested_token: str | None,
+        existing_account: SavedZaloAccount | None,
+    ) -> str:
+        normalized_token = self._normalize_optional_value(requested_token)
+        if normalized_token is not None:
+            return normalized_token
+        if existing_account is not None and existing_account.listener_token:
+            return existing_account.listener_token
+        return secrets.token_urlsafe(24)

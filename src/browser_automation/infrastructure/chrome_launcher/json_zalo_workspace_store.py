@@ -88,6 +88,8 @@ class JsonZaloWorkspaceStore:
                     "name": account.name,
                     "profile_id": account.profile_id,
                     "proxy": account.proxy,
+                    "mode": account.mode,
+                    "listener_token": account.listener_token,
                 }
                 for account in library.accounts
             ],
@@ -120,6 +122,8 @@ class JsonZaloWorkspaceStore:
         name = self._optional_str(payload.get("name"))
         profile_id = self._optional_str(payload.get("profile_id"))
         proxy = self._optional_str(payload.get("proxy")) or ""
+        mode = self._optional_str(payload.get("mode")) or "send"
+        listener_token = self._optional_str(payload.get("listener_token")) or ""
         if not account_id:
             return None
         if name is None:
@@ -129,6 +133,8 @@ class JsonZaloWorkspaceStore:
             name=name,
             profile_id=profile_id,
             proxy=proxy,
+            mode=mode,
+            listener_token=listener_token,
         )
 
     def _map_click_target(self, payload: Any) -> SavedZaloClickTarget | None:

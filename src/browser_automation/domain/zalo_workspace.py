@@ -1,6 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import StrEnum
+
+
+class ZaloAccountMode(StrEnum):
+    SEND = "send"
+    LISTEN = "listen"
 
 
 @dataclass(frozen=True, slots=True)
@@ -9,6 +15,8 @@ class SavedZaloAccount:
     name: str
     profile_id: str | None = None
     proxy: str = ""
+    mode: str = ZaloAccountMode.SEND.value
+    listener_token: str = ""
 
 
 @dataclass(frozen=True, slots=True)

@@ -19,6 +19,8 @@ def test_json_zalo_workspace_store_round_trips_account_proxy_data(tmp_path) -> N
                 name="Profile One",
                 profile_id="profile-1",
                 proxy="user:pass@127.0.0.1:9000",
+                mode="listen",
+                listener_token="token-1",
             ),
         ),
         click_targets=(
@@ -59,6 +61,8 @@ def test_json_zalo_workspace_store_skips_invalid_entries(tmp_path) -> None:
 
     assert len(loaded.accounts) == 1
     assert loaded.accounts[0].id == "account-1"
+    assert loaded.accounts[0].mode == "send"
+    assert loaded.accounts[0].listener_token == ""
 
 
 def test_json_zalo_workspace_store_loads_accounts_from_legacy_payload_shape(tmp_path) -> None:

@@ -11,9 +11,11 @@ class SubprocessChromeProcessLauncher:
         command = [
             str(config.chrome_executable),
         ]
-        if config.new_window:
+        if config.headless:
+            command.extend(["--headless=new", "--disable-gpu"])
+        elif config.new_window:
             command.append("--new-window")
-        if config.window_placement is not None:
+        if config.window_placement is not None and not config.headless:
             command.extend(
                 [
                     f"--window-position={config.window_placement.left},{config.window_placement.top}",

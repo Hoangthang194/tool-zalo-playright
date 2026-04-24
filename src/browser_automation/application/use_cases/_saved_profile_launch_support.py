@@ -35,6 +35,7 @@ class SavedProfileLaunchSupport:
         window_placement: WindowPlacement | None = None,
         proxy_server: str | None = None,
         remote_debugging_port: int | None = None,
+        headless: bool = False,
     ) -> ChromeLaunchConfig:
         chrome_executable = self.resolve_chrome_executable(profile.chrome_executable)
         profile_path = self.resolve_profile_path(profile.profile_path)
@@ -45,10 +46,11 @@ class SavedProfileLaunchSupport:
             user_data_dir=profile_path.parent,
             profile_directory=profile_path.name,
             target_url=profile.target_url,
-            new_window=True,
+            new_window=not headless,
+            headless=headless,
             proxy_server=self.normalize_proxy_server(proxy_server),
             remote_debugging_port=remote_debugging_port,
-            window_placement=window_placement,
+            window_placement=None if headless else window_placement,
         )
 
     def resolve_chrome_executable(self, value: str | None) -> Path:

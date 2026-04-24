@@ -8,6 +8,7 @@ from browser_automation.application.use_cases.launch_zalo_account import (
 from browser_automation.domain.exceptions import (
     SavedProfileNotFoundError,
     SavedZaloAccountConflictError,
+    SavedZaloAccountNotFoundError,
 )
 from browser_automation.domain.zalo_launcher import (
     SavedChromeProfile,
@@ -76,6 +77,9 @@ class FakeChromeWindowArranger:
         self.new_handles = list(new_handles)
         self.placements = placements
         self.applied_window_placements: list[tuple[int, WindowPlacement]] = []
+        self.tiled_handles: list[int] = []
+        self.tiled_columns: int | None = None
+        self.tiled_rows: int | None = None
 
     def snapshot_window_handles(self) -> frozenset[int]:
         return frozenset(self.initial_handles)
@@ -100,6 +104,12 @@ class FakeChromeWindowArranger:
 
     def apply_window_placement(self, window_handle: int, placement: WindowPlacement) -> None:
         self.applied_window_placements.append((window_handle, placement))
+
+    def tile_windows(self, window_handles, *, columns: int, rows: int) -> int:
+        self.tiled_handles = list(window_handles)
+        self.tiled_columns = columns
+        self.tiled_rows = rows
+        return len(window_handles)
 
 
 class FakeClickAutomationRunner:
@@ -411,3 +421,174 @@ def test_launch_zalo_account_does_not_run_saved_click_targets_during_launch(tmp_
     assert result.launch_result.remote_debugging_port is not None
     assert click_runner.click_targets is None
     assert click_runner.remote_debugging_port is None
+
+
+def test_launch_zalo_account_supports_headless_mode(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+    profile_path = tmp_path / "User Data" / "Default"
+    profile_path.mkdir(parents=True)
+
+    launcher = FakeChromeLauncher()
+    use_case = LaunchZaloAccountUseCase(
+        workspace_store=InMemoryZaloWorkspaceStore(
+            ZaloWorkspaceLibrary(
+                accounts=(
+                    SavedZaloAccount(
+                        id="account-1",
+                        name="Default",
+                        profile_id="profile-1",
+                        proxy="",
+                    ),
+                ),
+                selected_account_id="account-1",
+            )
+        ),
+        library_store=InMemorySavedProfileLibraryStore(
+            SavedProfileLibrary(
+                profiles=(
+                    SavedChromeProfile(
+                        id="profile-1",
+                        name="Default",
+                        chrome_executable=str(chrome_executable),
+                        profile_path=str(profile_path),
+                    ),
+                ),
+                selected_profile_id="profile-1",
+            )
+        ),
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=launcher,
+    )
+
+    result = use_case.launch_account(headless=True)
+
+    assert result.headless is True
+    assert result.launch_result.headless is True
+    assert launcher.launched_config.headless is True
+    assert launcher.launched_config.window_placement is None
+
+
+def test_launch_zalo_account_launches_multiple_accounts_with_grid_order(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+
+    profiles = []
+    accounts = []
+    for index in range(1, 4):
+        profile_path = tmp_path / "User Data" / f"Profile {index}"
+        profile_path.mkdir(parents=True)
+        profiles.append(
+            SavedChromeProfile(
+                id=f"profile-{index}",
+                name=f"Profile {index}",
+                chrome_executable=str(chrome_executable),
+                profile_path=str(profile_path),
+            )
+        )
+        accounts.append(
+            SavedZaloAccount(
+                id=f"account-{index}",
+                name=f"Profile {index}",
+                profile_id=f"profile-{index}",
+                proxy=f"127.0.0.{index}:8080",
+            )
+        )
+
+    window_arranger = FakeChromeWindowArranger(
+        initial_handles=(100,),
+        new_handles=(101, 102, 103),
+        placements=(
+            WindowPlacement(left=10, top=0, width=300, height=400),
+            WindowPlacement(left=320, top=0, width=300, height=400),
+            WindowPlacement(left=630, top=0, width=300, height=400),
+        ),
+    )
+    launcher = FakeChromeLauncher()
+    use_case = LaunchZaloAccountUseCase(
+        workspace_store=InMemoryZaloWorkspaceStore(
+            ZaloWorkspaceLibrary(accounts=tuple(accounts), selected_account_id="account-1")
+        ),
+        library_store=InMemorySavedProfileLibraryStore(
+            SavedProfileLibrary(profiles=tuple(profiles), selected_profile_id="profile-1")
+        ),
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=launcher,
+        chrome_window_arranger=window_arranger,
+    )
+
+    result = use_case.launch_accounts(["account-3", "account-1", "account-2"])
+
+    assert [account.account_id for account in result.accounts] == ["account-3", "account-1", "account-2"]
+    assert [config.profile_directory for config in launcher.launched_configs] == [
+        "Profile 3",
+        "Profile 1",
+        "Profile 2",
+    ]
+    assert result.tiled_window_count == 3
+    assert window_arranger.tiled_handles == [101, 102, 103]
+    assert result.workspace_persisted is True
+
+
+def test_launch_zalo_account_launches_multiple_accounts_headlessly_without_window_tiling(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+
+    profile_one_path = tmp_path / "User Data" / "Profile 1"
+    profile_two_path = tmp_path / "User Data" / "Profile 2"
+    profile_one_path.mkdir(parents=True)
+    profile_two_path.mkdir(parents=True)
+
+    launcher = FakeChromeLauncher()
+    use_case = LaunchZaloAccountUseCase(
+        workspace_store=InMemoryZaloWorkspaceStore(
+            ZaloWorkspaceLibrary(
+                accounts=(
+                    SavedZaloAccount(id="account-1", name="Profile 1", profile_id="profile-1", proxy=""),
+                    SavedZaloAccount(id="account-2", name="Profile 2", profile_id="profile-2", proxy=""),
+                ),
+                selected_account_id="account-1",
+            )
+        ),
+        library_store=InMemorySavedProfileLibraryStore(
+            SavedProfileLibrary(
+                profiles=(
+                    SavedChromeProfile(
+                        id="profile-1",
+                        name="Profile 1",
+                        chrome_executable=str(chrome_executable),
+                        profile_path=str(profile_one_path),
+                    ),
+                    SavedChromeProfile(
+                        id="profile-2",
+                        name="Profile 2",
+                        chrome_executable=str(chrome_executable),
+                        profile_path=str(profile_two_path),
+                    ),
+                ),
+                selected_profile_id="profile-1",
+            )
+        ),
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=launcher,
+    )
+
+    result = use_case.launch_accounts(["account-1", "account-2"], headless=True)
+
+    assert result.headless is True
+    assert result.tiled_window_count == 0
+    assert [config.headless for config in launcher.launched_configs] == [True, True]
+
+
+def test_launch_zalo_account_rejects_empty_multi_selection(tmp_path) -> None:
+    chrome_executable = tmp_path / "chrome.exe"
+    chrome_executable.write_text("", encoding="utf-8")
+    use_case = LaunchZaloAccountUseCase(
+        workspace_store=InMemoryZaloWorkspaceStore(),
+        library_store=InMemorySavedProfileLibraryStore(),
+        chrome_discovery=FakeChromeDiscovery(executable_path=chrome_executable),
+        chrome_launcher=FakeChromeLauncher(),
+    )
+
+    with pytest.raises(SavedZaloAccountNotFoundError, match="Select at least one saved Zalo account"):
+        use_case.launch_accounts([])

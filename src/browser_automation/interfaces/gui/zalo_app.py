@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import tkinter as tk
 from collections.abc import Sequence
@@ -8,8 +9,12 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from browser_automation.application.use_cases.launch_zalo_account import (
+    LaunchSavedZaloAccountsResult,
     LaunchSavedZaloAccountResult,
     LaunchZaloAccountUseCase,
+)
+from browser_automation.application.use_cases.ingest_zalo_message_webhook import (
+    IngestZaloMessageWebhookUseCase,
 )
 from browser_automation.application.use_cases.click_zalo_element import (
     DEFAULT_CLICK_ELEMENT_TIMEOUT_SECONDS,
@@ -65,6 +70,19 @@ from browser_automation.infrastructure.chrome_launcher.json_saved_profile_librar
 from browser_automation.infrastructure.chrome_launcher.json_zalo_workspace_store import (
     JsonZaloWorkspaceStore,
 )
+from browser_automation.infrastructure.persistence.mariadb_connection import (
+    MariaDbConnectionFactory,
+    load_mariadb_settings,
+)
+from browser_automation.infrastructure.persistence.mariadb_saved_profile_library_store import (
+    MariaDbSavedProfileLibraryStore,
+)
+from browser_automation.infrastructure.persistence.mariadb_message_store import (
+    MariaDbMessageStore,
+)
+from browser_automation.infrastructure.webhook.local_zalo_message_webhook_server import (
+    LocalZaloMessageWebhookServer,
+)
 from browser_automation.infrastructure.chrome_launcher.subprocess_chrome_process_launcher import (
     SubprocessChromeProcessLauncher,
 )
@@ -96,7 +114,16 @@ class ZaloLauncherGui:
         self.config = ZaloGuiConfig()
         self.ui = SharedGuiFactory(root, self.config)
         self.discovery = DefaultChromeInstallationDiscovery()
-        self.library_store = JsonSavedProfileLibraryStore()
+        mariadb_settings = load_mariadb_settings()
+        self._mariadb_connection_factory = (
+            None if mariadb_settings is None else MariaDbConnectionFactory(mariadb_settings)
+        )
+        if mariadb_settings is None:
+            self.library_store = JsonSavedProfileLibraryStore()
+        else:
+            self.library_store = MariaDbSavedProfileLibraryStore(
+                self._mariadb_connection_factory
+            )
         self.workspace_store = JsonZaloWorkspaceStore()
         self.chrome_launcher = SubprocessChromeProcessLauncher()
         self.window_arranger = WindowsChromeWindowArranger()
@@ -121,6 +148,7 @@ class ZaloLauncherGui:
         self.proxy_test_use_case = TestProxyConnectionUseCase(
             proxy_checker=UrllibProxyConnectivityChecker(),
         )
+        self.message_webhook_server: LocalZaloMessageWebhookServer | None = None
 
         self._launch_in_progress = False
         self._proxy_test_in_progress = False
@@ -159,6 +187,9 @@ class ZaloLauncherGui:
 
         self.account_profile_choice_var = tk.StringVar()
         self.account_proxy_var = tk.StringVar()
+        self.account_mode_var = tk.StringVar(value="send")
+        self.account_listener_token_var = tk.StringVar()
+        self.account_headless_var = tk.BooleanVar(value=False)
         self.account_status_var = tk.StringVar(
             value="Select a saved Zalo account to launch Chrome with its linked profile and proxy."
         )
@@ -181,12 +212,14 @@ class ZaloLauncherGui:
         self.click_target_hint_label: tk.Label | None = None
 
         self._setup_window()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self._create_widgets()
         self.click_target_selector_kind_var.trace_add("write", self._on_click_target_selector_kind_changed)
         self.click_target_is_image_var.trace_add("write", self._on_click_target_selector_kind_changed)
         self._refresh_state()
         self._refresh_workspace_state()
         self._refresh_click_target_state()
+        self._start_message_webhook_server_if_configured()
 
     def _setup_window(self) -> None:
         self.ui.configure_window(
@@ -196,6 +229,41 @@ class ZaloLauncherGui:
             height=self.config.height,
             min_width=1040,
             min_height=680,
+        )
+
+    def _on_close(self) -> None:
+        if self.message_webhook_server is not None:
+            self.message_webhook_server.stop()
+        self.root.destroy()
+
+    def _start_message_webhook_server_if_configured(self) -> None:
+        if self._mariadb_connection_factory is None:
+            return
+        try:
+            webhook_port = int((os.environ.get("ZALO_WEBHOOK_PORT") or "8765").strip())
+        except ValueError:
+            webhook_port = 8765
+
+        try:
+            self.message_webhook_server = LocalZaloMessageWebhookServer(
+                IngestZaloMessageWebhookUseCase(
+                    workspace_store=self.workspace_store,
+                    message_store=MariaDbMessageStore(self._mariadb_connection_factory),
+                ),
+                port=webhook_port,
+            )
+            self.message_webhook_server.start()
+        except Exception as exc:  # noqa: BLE001
+            self._set_account_status(
+                f"Webhook listener could not start: {exc}",
+                self.config.error_color,
+            )
+            self.message_webhook_server = None
+            return
+
+        self._set_account_status(
+            f"Webhook listener is running at {self.message_webhook_server.url}. Accounts in listen mode can forward extension events here.",
+            self.config.success_color,
         )
 
     def _create_widgets(self) -> None:
@@ -384,6 +452,7 @@ class ZaloLauncherGui:
 
         self.account_listbox = self.ui.create_listbox(
             account_list_frame,
+            multiselect=True,
             select_background="#fde68a",
         )
         self.account_listbox.grid(row=0, column=0, sticky="nsew")
@@ -435,14 +504,47 @@ class ZaloLauncherGui:
             "Proxy",
             self.account_proxy_var,
         )
+        self._build_combobox_row(
+            detail_frame,
+            3,
+            "Account mode",
+            self.account_mode_var,
+            values=("send", "listen"),
+            target_name="account_mode",
+        )
+        self._build_entry_row(
+            detail_frame,
+            4,
+            "Listener token",
+            self.account_listener_token_var,
+            readonly=True,
+        )
+        tk.Checkbutton(
+            detail_frame,
+            text="Launch headless",
+            variable=self.account_headless_var,
+            onvalue=True,
+            offvalue=False,
+            bg=self.config.panel_color,
+            fg=self.config.text_color,
+            activebackground=self.config.panel_color,
+            activeforeground=self.config.text_color,
+            selectcolor=self.config.input_bg,
+            font=("Segoe UI", 10),
+        ).grid(row=5, column=1, sticky="w", padx=(14, 12), pady=(0, 8))
         self.ui.create_muted_label(
             detail_frame,
             "Supported formats: host:port, user:pass@host:port, or host:port:user:pass. Leave blank to use direct access.",
             wraplength=620,
-        ).grid(row=3, column=0, columnspan=3, sticky="w", pady=(4, 10))
+        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(4, 4))
+        self.ui.create_muted_label(
+            detail_frame,
+            "Mode 'listen' reserves the account for extension/webhook ingest. Mode 'send' reserves it for browser/manual actions.",
+            wraplength=620,
+        ).grid(row=7, column=0, columnspan=3, sticky="w", pady=(0, 10))
 
         account_action_frame = tk.Frame(detail_frame, bg=self.config.panel_color)
-        account_action_frame.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 0))
+        account_action_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(14, 0))
         account_action_frame.grid_columnconfigure(1, weight=1)
 
         self.save_account_button = self.ui.create_button(
@@ -463,7 +565,7 @@ class ZaloLauncherGui:
 
         self.launch_account_button = self.ui.create_button(
             account_action_frame,
-            text="Launch Account",
+            text="Launch Selected",
             command=self._start_account_launch,
             padx=18,
             variant="primary",
@@ -475,12 +577,12 @@ class ZaloLauncherGui:
             textvariable=self.account_status_var,
             wraplength=620,
         )
-        self.account_status_label.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(18, 0))
+        self.account_status_label.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(18, 0))
 
         self.ui.create_code_label(
             detail_frame,
             f"Account workspace: {self.workspace_store.path}",
-        ).grid(row=6, column=0, columnspan=3, sticky="w", pady=(14, 0))
+        ).grid(row=10, column=0, columnspan=3, sticky="w", pady=(14, 0))
 
     def _create_click_targets_tab(self, parent: tk.Frame) -> None:
         parent.grid_columnconfigure(1, weight=1)
@@ -704,6 +806,8 @@ class ZaloLauncherGui:
 
         if target_name == "account_profile":
             self.account_profile_combobox = combo
+        elif target_name == "account_mode":
+            pass
         elif target_name == "click_target_selector_kind":
             self.click_target_selector_kind_combobox = combo
 
@@ -753,17 +857,19 @@ class ZaloLauncherGui:
         if self._workspace_state is not None:
             self._apply_workspace_state(
                 self._workspace_state,
-                preferred_account_id=self._current_edit_account_id,
+                preferred_account_ids=(
+                    [self._current_edit_account_id] if self._current_edit_account_id is not None else None
+                ),
             )
         self._update_action_states()
 
     def _refresh_workspace_state(
         self,
-        preferred_account_id: str | None = None,
+        preferred_account_ids: Sequence[str] | None = None,
     ) -> None:
         self._apply_workspace_state(
             self.workspace_use_case.load_state(),
-            preferred_account_id=preferred_account_id,
+            preferred_account_ids=preferred_account_ids,
         )
 
     def _refresh_click_target_state(
@@ -779,34 +885,41 @@ class ZaloLauncherGui:
         self,
         state: ZaloWorkspaceState,
         *,
-        preferred_account_id: str | None = None,
+        preferred_account_ids: Sequence[str] | None = None,
     ) -> None:
         self._workspace_state = state
         self._accounts_by_id = {account.id: account for account in state.accounts}
         self._account_ids = [account.id for account in state.accounts]
 
-        selected_account_id = (
-            preferred_account_id if preferred_account_id in self._accounts_by_id else state.selected_account_id
-        )
-        if selected_account_id not in self._accounts_by_id:
-            selected_account_id = self._account_ids[0] if self._account_ids else None
+        selected_account_ids: list[str] = []
+        for account_id in preferred_account_ids or ():
+            if account_id in self._accounts_by_id and account_id not in selected_account_ids:
+                selected_account_ids.append(account_id)
+        if not selected_account_ids:
+            fallback_account_id = state.selected_account_id
+            if fallback_account_id not in self._accounts_by_id:
+                fallback_account_id = self._account_ids[0] if self._account_ids else None
+            if fallback_account_id is not None:
+                selected_account_ids.append(fallback_account_id)
 
         self._is_refreshing_account_list = True
         self.account_listbox.delete(0, tk.END)
         for account in state.accounts:
             self.account_listbox.insert(tk.END, self._format_account_label(account))
         self.account_listbox.selection_clear(0, tk.END)
-        if selected_account_id is not None:
-            account_index = self._account_ids.index(selected_account_id)
+        for account_id in selected_account_ids:
+            account_index = self._account_ids.index(account_id)
             self.account_listbox.selection_set(account_index)
+        if selected_account_ids:
+            account_index = self._account_ids.index(selected_account_ids[0])
             self.account_listbox.activate(account_index)
             self.account_listbox.see(account_index)
         self._is_refreshing_account_list = False
 
         self._refresh_profile_choices()
 
-        if selected_account_id is not None:
-            self._load_account_into_form(self._accounts_by_id[selected_account_id])
+        if selected_account_ids:
+            self._load_account_into_form(self._accounts_by_id[selected_account_ids[0]])
         else:
             self._load_new_account_defaults()
 
@@ -875,11 +988,15 @@ class ZaloLauncherGui:
         self._current_edit_account_id = account.id
         self._set_profile_choice_var(self.account_profile_choice_var, account.profile_id)
         self.account_proxy_var.set(account.proxy)
+        self.account_mode_var.set(account.mode)
+        self.account_listener_token_var.set(account.listener_token)
 
     def _load_new_account_defaults(self) -> None:
         self._current_edit_account_id = None
         self.account_profile_choice_var.set("")
         self.account_proxy_var.set("")
+        self.account_mode_var.set("send")
+        self.account_listener_token_var.set("")
         self.account_listbox.selection_clear(0, tk.END)
 
     def _load_click_target_into_form(self, click_target: SavedZaloClickTarget) -> None:
@@ -911,8 +1028,8 @@ class ZaloLauncherGui:
             base_label = "Missing profile"
 
         if account.proxy:
-            return f"{base_label} | {account.proxy}"
-        return base_label
+            return f"{base_label} | {account.mode} | {account.proxy}"
+        return f"{base_label} | {account.mode}"
 
     def _format_click_target_label(self, click_target: SavedZaloClickTarget) -> str:
         label = f"{click_target.name} | {click_target.selector_kind}: {click_target.selector_value}"
@@ -931,7 +1048,7 @@ class ZaloLauncherGui:
     def _start_new_account(self) -> None:
         self._load_new_account_defaults()
         self._set_account_status(
-            "Creating a new Zalo account entry. Select one saved profile, enter an optional proxy, then save before launching.",
+            "Creating a new Zalo account entry. Select one saved profile, choose send/listen mode, enter an optional proxy, then save before launching.",
             self.config.text_color,
         )
         self._update_account_action_states()
@@ -1043,14 +1160,14 @@ class ZaloLauncherGui:
     def _selected_profile_ids(self) -> list[str]:
         return [self._profile_ids[index] for index in self.profile_listbox.curselection() if index < len(self._profile_ids)]
 
+    def _selected_account_ids(self) -> list[str]:
+        return [self._account_ids[index] for index in self.account_listbox.curselection() if index < len(self._account_ids)]
+
     def _selected_account_id(self) -> str | None:
-        selection = self.account_listbox.curselection()
-        if not selection:
+        selected_account_ids = self._selected_account_ids()
+        if not selected_account_ids:
             return None
-        index = selection[0]
-        if index >= len(self._account_ids):
-            return None
-        return self._account_ids[index]
+        return selected_account_ids[0]
 
     def _selected_click_target_id(self) -> str | None:
         selection = self.click_target_listbox.curselection()
@@ -1086,22 +1203,22 @@ class ZaloLauncherGui:
         if self._is_refreshing_account_list:
             return
 
-        account_id = self._selected_account_id()
-        if account_id is None:
+        selected_account_ids = self._selected_account_ids()
+        if not selected_account_ids:
             return
 
         try:
-            state = self.workspace_use_case.select_account(account_id)
+            state = self.workspace_use_case.select_account(selected_account_ids[0])
         except SavedZaloAccountNotFoundError as exc:
             self._handle_account_error(str(exc))
             return
 
         self._apply_workspace_state(
             state,
-            preferred_account_id=account_id,
+            preferred_account_ids=selected_account_ids,
         )
         self._set_account_status(
-            f"Selected '{self._format_account_label(self._accounts_by_id[account_id])}'. Ready to launch from Zalo Accounts.",
+            f"Selected {len(selected_account_ids)} account(s). Primary account: '{self._format_account_label(self._accounts_by_id[selected_account_ids[0]])}'.",
             self.config.text_color,
         )
 
@@ -1203,6 +1320,8 @@ class ZaloLauncherGui:
             name=profile_label,
             profile_id=self._selected_profile_choice_id(self.account_profile_choice_var),
             proxy=self.account_proxy_var.get(),
+            mode=self.account_mode_var.get(),
+            listener_token=self.account_listener_token_var.get(),
         )
 
         try:
@@ -1214,10 +1333,10 @@ class ZaloLauncherGui:
         saved_account = next(account for account in state.accounts if account.id == state.selected_account_id)
         self._apply_workspace_state(
             state,
-            preferred_account_id=saved_account.id,
+            preferred_account_ids=[saved_account.id],
         )
         self._set_account_status(
-            f"Saved proxy mapping for '{self._format_account_label(saved_account)}'.",
+            f"Saved account '{self._format_account_label(saved_account)}'. Listener token is ready for extension/webhook use.",
             self.config.success_color,
         )
 
@@ -1333,7 +1452,9 @@ class ZaloLauncherGui:
 
         self._apply_workspace_state(
             state,
-            preferred_account_id=state.selected_account_id,
+            preferred_account_ids=(
+                [state.selected_account_id] if state.selected_account_id is not None else None
+            ),
         )
         self._set_account_status(f"Deleted account '{account_label}'.", self.config.text_color)
 
@@ -1363,26 +1484,36 @@ class ZaloLauncherGui:
         if self._launch_in_progress or self._proxy_test_in_progress:
             return
 
-        account_id = self._selected_account_id()
-        if account_id is None and self._current_edit_account_id in self._accounts_by_id:
-            account_id = self._current_edit_account_id
+        account_ids = self._selected_account_ids()
+        if not account_ids and self._current_edit_account_id in self._accounts_by_id:
+            account_ids = [self._current_edit_account_id]
 
-        if account_id is None:
+        if not account_ids:
             messagebox.showwarning("Launch account", "Save or select a Zalo account before launching.")
             return
 
         self._launch_in_progress = True
         self._update_account_action_states()
-        account_label = self._format_account_label(self._accounts_by_id[account_id])
+        account_label = self._format_account_label(self._accounts_by_id[account_ids[0]])
+        launch_mode = "headless" if self.account_headless_var.get() else "visible"
         self._set_account_status(
-            f"Launching '{account_label}' from the Zalo Accounts tab...",
+            f"Launching {len(account_ids)} selected account(s) in {launch_mode} mode. Primary account: '{account_label}'.",
             self.config.accent_color,
         )
-        threading.Thread(target=self._launch_account_worker, args=(account_id,), daemon=True).start()
+        threading.Thread(
+            target=self._launch_account_worker,
+            args=(tuple(account_ids), self.account_headless_var.get()),
+            daemon=True,
+        ).start()
 
-    def _launch_account_worker(self, account_id: str) -> None:
+    def _launch_account_worker(self, account_ids: tuple[str, ...], headless: bool) -> None:
         try:
-            result = self.account_launch_use_case.launch_account(account_id)
+            if len(account_ids) == 1:
+                result: LaunchSavedZaloAccountResult | LaunchSavedZaloAccountsResult = (
+                    self.account_launch_use_case.launch_account(account_ids[0], headless=headless)
+                )
+            else:
+                result = self.account_launch_use_case.launch_accounts(account_ids, headless=headless)
         except (
             LauncherValidationError,
             ChromeLaunchError,
@@ -1395,17 +1526,53 @@ class ZaloLauncherGui:
 
         self.root.after(0, lambda: self._handle_account_launch_success(result))
 
-    def _handle_account_launch_success(self, result: LaunchSavedZaloAccountResult) -> None:
+    def _handle_account_launch_success(
+        self,
+        result: LaunchSavedZaloAccountResult | LaunchSavedZaloAccountsResult,
+    ) -> None:
         self._launch_in_progress = False
-        self._last_account_remote_debugging_port = result.launch_result.remote_debugging_port
+        if isinstance(result, LaunchSavedZaloAccountsResult):
+            first_account_id = result.accounts[0].account_id if result.accounts else None
+            selected_ids = [account.account_id for account in result.accounts]
+            if len(result.accounts) == 1 and not result.headless:
+                self._last_account_remote_debugging_port = result.accounts[0].launch_result.remote_debugging_port
+                self._last_account_target_url = result.accounts[0].launch_result.target_url
+            else:
+                self._last_account_remote_debugging_port = None
+            self._refresh_workspace_state(preferred_account_ids=selected_ids)
+            self._update_account_action_states()
+
+            status_message = (
+                f"Launched {len(result.accounts)} account(s) in "
+                f"{'headless' if result.headless else 'visible'} mode."
+            )
+            if result.omitted_account_count:
+                status_message += f" Omitted {result.omitted_account_count} account(s) beyond the launch limit."
+            if not result.headless and result.tiled_window_count:
+                status_message += f" Tiled {result.tiled_window_count} browser window(s)."
+            if result.headless:
+                status_message += " No visible Chrome windows were opened."
+            if not result.workspace_persisted:
+                status_message += " The selected account could not be persisted."
+
+            if first_account_id is not None:
+                status_message += f" Primary account: '{self._format_account_label(self._accounts_by_id[first_account_id])}'."
+            self._set_account_status(status_message, self.config.success_color)
+            return
+
+        self._last_account_remote_debugging_port = (
+            None if result.headless else result.launch_result.remote_debugging_port
+        )
         self._last_account_target_url = result.launch_result.target_url
-        self._refresh_workspace_state(preferred_account_id=result.account_id)
+        self._refresh_workspace_state(preferred_account_ids=[result.account_id])
         self._update_account_action_states()
 
         status_message = (
             f"Launched '{result.profile_name}' using profile directory "
             f"'{result.launch_result.profile_directory}'."
         )
+        if result.headless:
+            status_message += " Headless mode was used."
         if result.proxy:
             status_message += f" Proxy '{result.proxy}' was applied."
         else:
@@ -1515,8 +1682,8 @@ class ZaloLauncherGui:
             return
 
         self.launch_account_button.configure(
-            state="normal" if has_saved_selection and not self._proxy_test_in_progress else "disabled",
-            text="Launch Account",
+            state="normal" if bool(self._selected_account_ids()) and not self._proxy_test_in_progress else "disabled",
+            text="Launch Selected",
         )
         self.save_account_button.configure(state="normal")
         self.new_account_button.configure(state="normal")

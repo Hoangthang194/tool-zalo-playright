@@ -47,6 +47,8 @@ def test_workspace_use_case_saves_and_updates_accounts() -> None:
     assert updated_state.accounts[0].name == "Profile One"
     assert updated_state.accounts[0].profile_id == "profile-1"
     assert updated_state.accounts[0].proxy == "user:pass@10.0.0.2:9000"
+    assert updated_state.accounts[0].mode == "send"
+    assert updated_state.accounts[0].listener_token
     assert updated_state.selected_account_id == created_account.id
 
 
@@ -117,3 +119,50 @@ def test_workspace_use_case_deletes_and_selects_accounts() -> None:
         pass
     else:
         raise AssertionError("Expected account not found")
+
+
+def test_workspace_use_case_persists_listener_mode_and_token_on_update() -> None:
+    store = InMemoryZaloWorkspaceStore()
+    use_case = ZaloWorkspaceManagerUseCase(store)
+
+    created_state = use_case.save_account(
+        ZaloAccountUpsertRequest(
+            name="Profile Listen",
+            profile_id="profile-listen",
+            proxy="",
+            mode="listen",
+        )
+    )
+    created_account = created_state.accounts[0]
+
+    updated_state = use_case.save_account(
+        ZaloAccountUpsertRequest(
+            account_id=created_account.id,
+            name="Profile Listen",
+            profile_id="profile-listen",
+            proxy="127.0.0.1:8080",
+            mode="listen",
+        )
+    )
+
+    updated_account = updated_state.accounts[0]
+    assert updated_account.mode == "listen"
+    assert updated_account.listener_token == created_account.listener_token
+
+
+def test_workspace_use_case_rejects_invalid_account_mode() -> None:
+    store = InMemoryZaloWorkspaceStore()
+    use_case = ZaloWorkspaceManagerUseCase(store)
+
+    try:
+        use_case.save_account(
+            ZaloAccountUpsertRequest(
+                name="Profile One",
+                profile_id="profile-1",
+                mode="invalid",
+            )
+        )
+    except SavedZaloAccountConflictError as exc:
+        assert "mode" in str(exc).lower()
+    else:
+        raise AssertionError("Expected invalid mode conflict")
